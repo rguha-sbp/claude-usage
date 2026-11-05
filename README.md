@@ -28,8 +28,9 @@ a desk. This image shows the Studio theme by day.
   Python 3.15. `uv run` selects 3.15 from `.python-version`.
 - Claude Code. Claude Code writes the transcripts under `~/.claude`.
 - Optional: Node, so that `npx ccusage` can produce dollar figures.
-- Optional, macOS only: `terminal-notifier` and `jq` for the desktop
-  notifications. The dashboard and the statusline also work on Linux.
+- Optional, macOS only: `terminal-notifier` for the desktop notifications.
+  The `PreCompact` hook also needs `jq` at `/usr/bin/jq` (see below). The
+  dashboard and the statusline also work on Linux.
 
 The default notifier path is `/opt/homebrew/bin/terminal-notifier`. This is
 the Homebrew path on Apple Silicon. On an Intel Mac, the path is
@@ -43,8 +44,9 @@ the Homebrew path on Apple Silicon. On an Intel Mac, the path is
 
 Step 3 of `install.sh` checks only the Apple Silicon path.
 
-The `PreCompact` hook reads `jq` only from `/usr/bin/jq`. If that file is
-missing, the hook exits silently and sends no notification.
+The `PreCompact` hook uses `jq` only at `/usr/bin/jq`. If that file is not
+there, the hook exits silently and sends no notification. The hook does not
+use a Homebrew `jq` at `/opt/homebrew/bin/jq` or `/usr/local/bin/jq`.
 
 ## Quick start
 
@@ -74,7 +76,9 @@ name the interpreter explicitly:
 
 The Month, Sessions and Projects tabs show one **period**: a whole month or
 a single day. The Office tab shows the sessions that run now. It ignores
-the period. The header has two pickers. The first picker selects the month.
+the period.
+
+The header has two pickers. The first picker selects the month.
 The second picker can select a day of that month with data. "Whole month"
 goes back to the month.
 
@@ -178,7 +182,9 @@ The screenshots use a fixed sky hour (`?hour=NN` in the URL).
 #### Workers
 
 A lead is the worker for a Claude Code session. A sub-agent is an intern
-(see below). A worker types while its session is busy. It also types while
+(see below).
+
+A worker types while its session is busy. It also types while
 its session waits on a foreground sub-agent. Now and then it leans back to
 think. When the session has been quiet for a minute, the worker dozes at the
 desk with z's. Sleepers stay asleep at their desks.
@@ -200,8 +206,8 @@ The session id selects the hair, the glasses, the coat and the shirt of
 each worker. Thus, the same session always looks the same.
 
 The model selects the tier. The tier sets the headgear, the halo, the chair
-and the size of the worker. The Fable tier also replaces the coat with the
-Fable coat. Only leads get the crown and the halo, never sub-agent interns.
+and the size of the worker. A Fable worker always wears the Fable coat. A
+Fable intern also wears it. Only leads get the crown and the halo, never sub-agent interns.
 The model tiers look like this (`dashboard/office-cast.js`):
 
 - Opus wears a crown and a halo, and sits on a gold chair.
@@ -283,6 +289,7 @@ again or restart.
 This is the only part of the project that touches files outside this repo.
 It runs in six steps. The first step must succeed. Each later step reports
 its own result. Thus, one absent prerequisite does not stop the other steps.
+
 Steps 3 to 5 report OK or WARN. Step 2 reports OK or FAIL. If step 2
 fails, `install.sh` exits 1 at the end.
 
