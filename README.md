@@ -1,44 +1,71 @@
 # Claude Code usage dashboard
 
-A local dashboard, statusline and macOS notifications that show where Claude
-Code's context and dollars go, and warn before a session runs into an
-automatic compaction. Everything runs on this machine against files Claude
-Code already writes to `~/.claude`; there is no server component and no
-account to sign into.
+This project gives you a local dashboard, a statusline and macOS
+notifications for Claude Code. They show where the context and the dollars
+of Claude Code go. They also warn you before a session gets to an automatic
+compaction. All parts run on this machine against files that Claude Code
+already writes to `~/.claude`. The project has no server component and no
+account to sign in to.
 
-It costs nothing to run: the dashboard makes no API calls to Anthropic or
-anyone else. It parses local JSONL transcripts and, for dollar figures only,
-shells out to `npx ccusage`, a local tool that reads the same transcripts. If
-`ccusage` cannot run, the dashboard still works and shows token counts
-instead of dollars; nothing is estimated or guessed.
+The project costs no money to run. The dashboard makes no API calls to
+Anthropic or to any other service. It parses local JSONL transcripts. For
+dollar figures only, it runs `npx ccusage`, a local tool that reads the same
+transcripts. If `ccusage` cannot run, the dashboard still works and shows
+token counts instead of dollars. The dashboard does not estimate or guess a
+value.
+
+## What it looks like
+
+The Office tab shows each Claude Code session that runs now as a worker at
+a desk. This image shows the Studio theme by day.
+
+![The Office tab in the Studio theme by day. Workers sit at desks in one area for each project.](docs/images/office-studio-day.png)
 
 ## Requirements
 
-- Python 3.15 or later. There are no Python dependencies.
-- [uv](https://docs.astral.sh/uv/). `install.sh` uses it to find or
-  install Python 3.15, and `uv run` picks 3.15 from `.python-version`.
-- Claude Code, which writes the transcripts under `~/.claude`.
+- Python 3.15 or later. The project has no Python dependencies.
+- [uv](https://docs.astral.sh/uv/). `install.sh` uses uv to find or install
+  Python 3.15. `uv run` selects 3.15 from `.python-version`.
+- Claude Code. Claude Code writes the transcripts under `~/.claude`.
 - Optional: Node, so that `npx ccusage` can produce dollar figures.
-- Optional, macOS only: `terminal-notifier` and `jq` for the desktop
-  notifications. The dashboard and statusline also work on Linux.
+- Optional, macOS only: `terminal-notifier` for the desktop notifications.
+  The `PreCompact` hook also needs `jq` at `/usr/bin/jq` (see below). The
+  dashboard and the statusline also work on Linux.
 
-The notifier path defaults to `/opt/homebrew/bin/terminal-notifier`
-(Homebrew on Apple Silicon). On an Intel Mac, set `notifier` in
-`config.json` to `/usr/local/bin/terminal-notifier`.
+The default notifier path is `/opt/homebrew/bin/terminal-notifier`. This is
+the Homebrew path on Apple Silicon. On an Intel Mac, the path is
+`/usr/local/bin/terminal-notifier`. Set this path in two locations:
+
+- Set `notifier` in `config.json`. The statusline notifications use this
+  value.
+- Set the `USAGE_NOTIFIER` environment variable in the shell that starts
+  Claude Code. The `PreCompact` hook uses this value. The hook does not read
+  `config.json`.
+
+Step 3 of `install.sh` checks only the Apple Silicon path.
+
+The `PreCompact` hook uses `jq` only at `/usr/bin/jq`. If that file is not
+there, the hook exits silently and sends no notification. The hook does not
+use a Homebrew `jq` at `/opt/homebrew/bin/jq` or `/usr/local/bin/jq`.
 
 ## Quick start
 
-With [uv](https://docs.astral.sh/uv/) (no separate install step needed):
+With [uv](https://docs.astral.sh/uv/), you do not need a separate install
+step. Run this command:
 
     uv run usage serve
 
 Then open <http://127.0.0.1:8765>. The page refreshes itself every 60
-seconds; `uv run usage refresh` runs one parse-and-cost pass on demand, and
-`uv run usage report` prints a plain-text table of the current month's
-sessions to the terminal.
+seconds. You can also use these commands:
 
-Without uv, any Python 3.15 interpreter works the same way, no
-dependencies to install. The macOS `python3` is 3.9, which is too old, so
+- `uv run usage refresh` runs one parse-and-cost pass on demand.
+- `uv run usage report` prints the totals of the current month and the 10
+  sessions with the highest spend. If dollar figures are not available, the
+  report ranks the sessions by tokens. Add `--month YYYY-MM` to select a
+  different month.
+
+Without uv, any Python 3.15 interpreter works the same way. You do not
+install dependencies. The macOS `python3` is 3.9, which is too old. Thus,
 name the interpreter explicitly:
 
     python3.15 -m usage serve
@@ -47,86 +74,193 @@ name the interpreter explicitly:
 
 ## What the four tabs show
 
-Every tab is scoped to a **period**: a whole month, or a single day. The
-two pickers in the header choose the month and then, optionally, a day
-of that month with data ("Whole month" goes back). Clicking a bar in the
-month chart opens that day. The period lives in the URL (`?period=2026-09`
-or `?period=2026-09-14`), so a day view can be bookmarked and reloaded.
+The Month, Sessions and Projects tabs show one **period**: a whole month or
+a single day. The Office tab shows the sessions that run now. It ignores
+the period.
 
-- **Month** — the period's total tokens and dollars to date. For a month:
-  a projected total, a daily bar chart (actual bars plus a faded
-  projection for the rest of the month) and a comparison with the previous
-  month. For a day: 24 hourly bars, no projection, and a comparison with
-  the previous day (the day's ccusage cost is split across its hours by
-  weighted tokens). Then how much of the period's spend has
-  been above the configured threshold, a model split and a token-type
-  split (input / cache write / cache read / output), and a **Skills and
-  injected context** table: every skill loaded with the Skill tool, every
-  SessionStart hook's injected context and the skill listing menu, with
-  how many times each was loaded, its size in tokens, and how many tokens
-  it cost once re-read on every later call of the session ("carried").
-- **Sessions** — every session active in the period as a row (title, working
-  directory, cost or tokens, peak context reached, skills loaded),
-  sorted by spend; click a row for a detail panel with cost/token
-  breakdowns, the skills it carried, and the tips that fired for it.
-- **Projects** — the same figures rolled up by project directory, useful
-  for seeing which repo or client is actually costing the most.
-- **Office** — every Claude Code session that is running right now as a
-  worker at a desk on an open-plan office floor drawn in three.js: one
-  neighbourhood per project, with a server room, meeting rooms, a kitchen,
-  a lounge, a library and reception around them. Pick a theme in the panel
-  head (Studio, Loft or Greenhouse); drag to pan, scroll to zoom. A worker
-  types while its session is busy (or waits on a foreground sub-agent),
-  leaning back to think now and then, and dozes at the desk with z's once
-  the session has been quiet for a minute. Sleepers stay asleep at their
-  desks. A working lead sometimes takes a short break between thoughts: a
-  drink at the cooler, a chat with a colleague from the same project, or a
-  walk to the kitchen or the lounge, where workers from different projects
-  meet. When the session's process exits the worker walks to the door and
-  waves goodbye. Each worker's hair, glasses and coat come from its session
-  id and its shirt from its model, so the same session always looks the
-  same. Only leads, never sub-agent interns, get the crown and the halo:
-  Opus wears a crown at a gold-trimmed desk, Fable a monocle, Sonnet is an
-  ordinary worker and Haiku is smaller, quicker and wears headphones
-  (`dashboard/office-cast.js`). The notice board carries the day's real
-  numbers and each desk screen lights while its session works. The light
-  follows your own clock, with stars and lamps after hours.
-  Sub-agents show up as interns at their lead's pod, tethered to whoever
-  spawned them, with a glyph for the tool they are using; the Agents rail
-  lists each one with its type, task, model, tokens, tool count and current
-  tool, and keeps finished ones greyed for two hours. Hover a worker for
-  the title, model and how long it has been in that state, plus the last
-  thing the session said when it is asleep. Click to open the session on
-  the Sessions tab. The layout (`dashboard/office-floor.js`), the themes
-  (`office-themes.js`) and the behaviour (`office-sim.js`, a small state
-  machine per worker with steering along walkways) are DOM-free, so node
-  drives them in `tests/office_*_check.js`; `office-3d.js` and the modules
-  it imports draw them, and `office.js` is the controller. three.js is
-  vendored in `dashboard/vendor/three`, so the dashboard works offline.
-  State comes from the statusline alone: every run stamps the session's
-  file under `~/.claude/usage-state/` with the time, working directory,
-  model, transcript path and the Claude process id. No hooks, and nothing
-  in the office ever acts on a session. Thresholds live in `config.json`
-  under `office` (`working_seconds`, default 60; `gone_after_seconds`,
-  default 86400, used only when no process id is known).
+The header has two pickers. The first picker selects the month.
+The second picker can select a day of that month with data. "Whole month"
+goes back to the month.
 
-When `ccusage` cannot produce a dollar figure, every cost cell reads
-"unavailable" and the page falls back to showing tokens; it never invents a
-number.
+Click a bar in the month chart to open that day. The URL holds the period
+(`?period=2026-09` or `?period=2026-09-14`). Thus, you can bookmark and
+reload a day view.
+
+When `ccusage` cannot produce a dollar figure, each cost cell shows
+"unavailable". The page then shows tokens. It never invents a number.
+
+### Month
+
+The Month tab shows the total tokens and dollars of the period to date.
+
+For a month, the tab also shows:
+
+- a projected total
+- a daily bar chart, with actual bars and a faded projection for the rest of
+  the month
+- a comparison with the previous month
+
+For a day, the tab also shows:
+
+- 24 hourly bars and no projection
+- a comparison with the previous day
+
+For a day, the dashboard divides the ccusage cost of the day across its
+hours by weighted tokens.
+
+Below that, the tab shows:
+
+- how much of the spend of the period was above the configured threshold
+- a model split
+- a token-type split (input / cache write / cache read / output)
+- a **Skills and injected context** table
+
+The table has one row for each skill that the Skill tool loaded. It has one
+row for the injected context of each SessionStart hook. It also has one row
+for the menu that lists the skills. Each row shows how many times the item was
+loaded and its size in tokens. Each row also shows the "carried" tokens.
+These are the tokens that the item cost because each later call of the
+session read it again.
 
 Skill and hook sizes come from the transcript. Recent Claude Code versions
-record the injected text itself (an `invoked_skills` attachment for skills,
-`hook_additional_context` and `skill_listing` attachments for the rest);
-those are sized at 4 bytes per token and shown as exact. A skill whose text
-was never recorded is estimated from how much the context grew on the call
-after the load and is marked "est.". Carried tokens count that text on
-every later call of the same transcript, up to its next compaction, which
-drops it. A skill's body is the same wherever it is loaded, so one session
-that recorded it sizes that skill exactly for every other session too.
+record the injected text itself:
+
+- an `invoked_skills` attachment for skills
+- `hook_additional_context` and `skill_listing` attachments for the other
+  items
+
+The dashboard sizes this text at 4 bytes per token and shows the size as
+exact. Some skills have no recorded text. For such a skill, the dashboard
+estimates the size from the context growth on the call after the load. It
+marks this size "est.".
+
+Carried tokens count that text on each later call of the same transcript,
+up to its next compaction. The compaction removes the text. The body of a
+skill is the same in each session that loads it. Thus, if one session
+recorded the skill, the dashboard sizes that skill exactly for all other
+sessions too.
+
+### Sessions
+
+The Sessions tab shows each session that was active in the period as a row.
+Each row shows the title, the directory, the cost or tokens, the peak
+context and the loaded skills. The tab sorts the rows by spend. Click a row
+to open a detail panel. The panel shows cost and token breakdowns, the
+skills that the session carried, and the tips that fired for the session.
+
+### Projects
+
+The Projects tab shows the same figures, added together by project
+directory. Use it to see which repo or client costs the most.
+
+### Office
+
+The Office tab shows each Claude Code session that runs now as a worker at a
+desk. The office is an open-plan floor that three.js draws. Each project has
+its own neighbourhood. A server room, rooms for meetings, a kitchen, a lounge, a
+library and reception surround the neighbourhoods.
+
+Use these controls:
+
+- Select a theme in the panel head: Studio, Loft or Greenhouse.
+- Drag to pan.
+- Scroll to zoom.
+- Hover over a worker to see the title, the model and the time in its
+  current state. A worker that sleeps also shows the last message of its
+  session.
+- Click a worker to open its session on the Sessions tab.
+
+The image at the top of this file shows the Studio theme. These images show
+the two other themes:
+
+| Loft at night | Greenhouse by day |
+| --- | --- |
+| ![The Office in the Loft theme at night, with lamps and stars.](docs/images/office-loft-night.png) | ![The Office in the Greenhouse theme by day.](docs/images/office-greenhouse-day.png) |
+
+The screenshots use a fixed sky hour (`?hour=NN` in the URL).
+
+#### Workers
+
+A lead is the worker for a Claude Code session. A sub-agent is an intern
+(see below).
+
+A worker types while its session is busy. It also types while
+its session waits on a foreground sub-agent. Now and then it leans back to
+think. When the session has been quiet for a minute, the worker dozes at the
+desk with z's. Sleepers stay asleep at their desks.
+
+Sometimes a lead that works takes a short break between thoughts. The break
+is one of these:
+
+- a drink at the cooler
+- a chat with a colleague from the same project
+- a walk to the kitchen or the lounge, where workers from different projects
+  meet
+
+When the process of the session stops, the worker walks to the door and
+waves goodbye.
+
+![A close-up of the Office floor. Some workers type at their desks. Other workers sleep at their desks with z's above them.](docs/images/office-closeup.png)
+
+The session id selects the hair, the glasses, the coat and the shirt of
+each worker. Thus, the same session always looks the same.
+
+The model selects the tier. The tier sets the headgear, the halo, the chair
+and the size of the worker. A Fable worker always wears the Fable coat. A
+Fable intern also wears it. Only leads get the crown and the halo, never sub-agent interns.
+The model tiers look like this (`dashboard/office-cast.js`):
+
+- Opus wears a crown and a halo, and sits on a gold chair.
+- Fable wears a monocle and a Fable coat, has a halo, and sits on a gold
+  chair.
+- Sonnet is an ordinary worker.
+- Haiku is smaller and quicker, and wears headphones.
+
+The notice board shows the real numbers of the day. Each desk screen lights
+while its session works. The light follows your own clock. After hours, the
+Office shows stars and lamps.
+
+#### Sub-agents
+
+Sub-agents show as interns at the pod of their lead. A tether connects each
+intern to the worker that started it. A glyph shows the tool that the intern
+uses. The Agents rail lists each sub-agent with its type, task, model,
+tokens, tool count and current tool. The rail keeps finished sub-agents in
+grey for two hours.
+
+The floor grows to fit the projects. This image shows a floor with 12
+projects:
+
+![A large Office floor with 12 projects. Each project has its own neighbourhood of desks.](docs/images/office-large.png)
+
+#### Code and state
+
+These three modules are DOM-free:
+
+- the layout (`dashboard/office-floor.js`)
+- the themes (`office-themes.js`)
+- the behaviour (`office-sim.js`), a small state machine for each worker
+  that steers the worker along the walkways
+
+Thus, node can run them in `tests/office_*_check.js`. `office-3d.js` and the
+modules that it imports draw them. `office.js` is the controller. The
+project vendors three.js in `dashboard/vendor/three`, so the dashboard works
+offline.
+
+The state comes only from the statusline. Each statusline run stamps the
+file of the session under `~/.claude/usage-state/`. The stamp holds the
+time, the directory, the model, the transcript path and the Claude process
+id. The Office uses no hooks. No part of the Office acts on a session.
+
+The Office thresholds are in `config.json` under `office`:
+
+- `working_seconds`: default 60.
+- `gone_after_seconds`: default 86400. The Office uses it only when it does
+  not know a process id.
 
 ## Thresholds and how to change them
 
-Thresholds live in `config.json` at the repo root:
+The thresholds are in `config.json` at the repo root:
 
 ```json
 {
@@ -135,100 +269,119 @@ Thresholds live in `config.json` at the repo root:
 }
 ```
 
-- `threshold_tokens` (default 200000) — the dashboard's "spend above this
-  many tokens counts as over-threshold" line, used for the daily-bar
-  shading and the month summary's "above threshold" percentage.
-- `statusline.warn_tokens` (default 150000) — the statusline segment turns
-  yellow and, the first time a session crosses it, fires the "wrap up and
-  /compact" notification below.
-- `statusline.alert_tokens` (default 180000) — the statusline segment turns
-  red and fires the "compact now" notification.
+- `threshold_tokens` (default 200000): the dashboard counts spend above this
+  number of tokens as over-threshold. The shade of the daily bars and the "above
+  threshold" percentage of the month summary use this value.
+- `statusline.warn_tokens` (default 150000): the statusline segment becomes
+  yellow. The first time that a session goes above this value, the
+  statusline sends the "wrap up and /compact" notification (see below).
+- `statusline.alert_tokens` (default 180000): the statusline segment becomes
+  red. The statusline sends the "compact now" notification.
 
-Edit `config.json` and the change applies on the next refresh (dashboard) or
-the next statusline invocation; nothing needs to be reparsed or restarted.
+Edit `config.json`. The dashboard applies the change on the next refresh.
+The statusline applies the change on its next run. You do not need to parse
+again or restart.
 
 ## Install the statusline and alerts
 
     ./install.sh
 
-This is the only part of the project that touches anything outside this
-repo. It runs in six steps. The first one must succeed. Each later step
-reports OK or WARN, so one missing prerequisite does not stop the rest:
+This is the only part of the project that touches files outside this repo.
+It runs in six steps. The first step must succeed. Each later step reports
+its own result. Thus, one absent prerequisite does not stop the other steps.
 
-1. Finds a Python 3.15 interpreter with `uv python find --system 3.15`.
-   If there is none, it runs `uv python install 3.15` and looks again. If
-   uv is not installed, or no 3.15 can be found or installed, it prints
-   FAIL and stops with exit 1.
-2. Runs `<python> -m usage.install_settings` with that interpreter against
-   `~/.claude/settings.json`. `CLAUDE_CONFIG_DIR`, when set, overrides
-   `config.json`'s `claude_dir` for every component (installer, hook,
-   statusline and dashboard), so if it is set this step writes
-   `$CLAUDE_CONFIG_DIR/settings.json` instead. This step:
-   - backs up the existing file first, to
-     `~/.claude/settings.json.bak-YYYYMMDD-HHMMSS`;
-   - sets `statusLine` to run `statusline/statusline.py` from this repo
-     with the absolute path of that interpreter (re-running the installer
-     replaces an older `python3 ...` entry);
-   - adds a `PreCompact` hook (matcher `auto`) that runs
-     `hooks/precompact-notify.sh`, replacing any earlier registration of
-     that same hook script and leaving every other hook and settings key
-     (model, plugins, theme, and so on) untouched;
-   - raises `cleanupPeriodDays` to at least 90 (never lowers it if it was
-     already higher);
-   - removes `autoCompactWindow` if it is exactly 200000, the value an
-     earlier version of this installer wrote. This tool alerts, it never
-     decides when Claude Code compacts; a different value you set yourself
-     is left alone.
-   If the existing settings file is not valid JSON, this step fails,
-   prints one line explaining why, and does not touch the file; every
+Steps 3 to 5 report OK or WARN. Step 2 reports OK or FAIL. If step 2
+fails, `install.sh` exits 1 at the end.
+
+1. The script finds a Python 3.15 interpreter with
+   `uv python find --system 3.15`. If it finds none, it runs
+   `uv python install 3.15` and looks again. It prints FAIL and stops with
+   exit 1 in these conditions:
+   - uv is not installed.
+   - It cannot find or install a 3.15 interpreter.
+2. The script runs `<python> -m usage.install_settings` with that
+   interpreter against `~/.claude/settings.json`. If `CLAUDE_CONFIG_DIR` is
+   set, it overrides the `claude_dir` value of `config.json` for each
+   component: installer, hook, statusline and dashboard. In that case, this
+   step writes `$CLAUDE_CONFIG_DIR/settings.json` instead. This step does
+   these actions:
+   - It first makes a backup of the current file to
+     `~/.claude/settings.json.bak-YYYYMMDD-HHMMSS`.
+   - It sets `statusLine` to run `statusline/statusline.py` from this repo
+     with the absolute path of that interpreter. When you run the installer
+     again, it replaces an older `python3 ...` entry.
+   - It adds a `PreCompact` hook (matcher `auto`) that runs
+     `hooks/precompact-notify.sh`. It replaces each earlier registration of
+     that same hook script. It does not change other hooks or other settings
+     keys, for example model, plugins and theme.
+   - It increases `cleanupPeriodDays` to at least 90. It never decreases a
+     value that is already higher.
+   - It removes `autoCompactWindow` if the value is exactly 200000. An
+     earlier version of this installer wrote that value. This tool only
+     alerts. It never decides when Claude Code compacts. It does not change
+     a different value that you set yourself.
+
+   If the current settings file is not valid JSON, this step fails. It
+   prints one line that tells why, and it does not change the file. Each
    later step still runs, but `install.sh` exits 1 at the end.
-3. Installs `terminal-notifier` with Homebrew if it is not already at
-   `/opt/homebrew/bin/terminal-notifier` (prints manual install
-   instructions if Homebrew itself is missing).
-4. Checks that `npx -y ccusage@20.0.48 --version` prints a version; if not,
-   this is a warning, not a failure — the dashboard still works, showing
-   tokens instead of dollars.
-5. Creates `~/.claude/usage-state/`, where the statusline keeps its
-   per-session notification state.
-6. Prints the start command, the dashboard URL, and a one-line reminder
-   about the one-time notification permission (see below).
+3. The script installs `terminal-notifier` with Homebrew if
+   `/opt/homebrew/bin/terminal-notifier` does not exist. If Homebrew itself
+   is not installed, it prints manual install instructions.
+4. The script makes sure that `npx -y ccusage@20.0.48 --version` prints a
+   version. If not, this step reports WARN, not FAIL. The dashboard still
+   works and shows tokens instead of dollars.
+5. The script creates `~/.claude/usage-state/`. The statusline keeps its
+   notification state for each session there.
+6. The script prints the start command, the dashboard URL, and a one-line
+   reminder about the one-time notification permission (see below).
 
-Start a new Claude Code session afterwards so it picks up the new
-statusline command.
+After the install, start a new Claude Code session. The new session uses the
+new statusline command.
 
 ### One-time notification permission
 
-The first time `terminal-notifier` fires, macOS asks whether to allow
-notifications from it. `install.sh` triggers one automatically so you get
-that prompt right away; if you miss it or nothing appears, open **System
-Settings → Notifications**, find `terminal-notifier`, and allow it. You can
-also test manually with a fake statusline payload above the warn threshold:
+The first time that `terminal-notifier` sends a notification, macOS asks you
+to allow or block its notifications. Step 6 of `install.sh` prints a test
+command. Run that command to get the prompt immediately. If you miss the
+prompt or it does not appear, do these steps:
+
+1. Open **System Settings → Notifications**.
+2. Find `terminal-notifier`.
+3. Allow it.
+
+You can also do a manual test with a fake statusline payload above the warn
+threshold:
 
     echo '{"session_id":"test","session_name":"notification test","context_window":{"context_window_size":1000000,"used_percentage":19}}' \
       | "$(uv python find --system 3.15)" statusline/statusline.py
 
 ## What the notifications say, and when
 
-Both come from `~/.claude/usage-state/<session_id>.json`, which tracks
-whether a session has already been warned so each threshold only notifies
-once per crossing (it resets if the context drops back below `warn`,
-meaning a compaction happened):
+Both notifications use `~/.claude/usage-state/<session_id>.json`. This file
+records if a session already got a notification. Thus, each threshold sends
+only one notification each time that the context goes above it. The record
+resets if the context goes back below `warn`. This drop means that a
+compaction occurred.
 
-- **150,000 tokens (warn)** — "Context 150K in \<title\>: wrap up and
-  /compact". The statusline segment turns yellow at the same point.
-- **180,000 tokens (alert)** — "Context 180K in \<title\>: compact now".
-  The statusline segment turns red.
-- **Whenever Claude Code compacts on its own** — the `PreCompact` hook
-  fires first and notifies "Auto-compact starting: \<title\>" so you know
-  it is about to happen. Nothing here changes when that is; auto-compact
-  stays whatever you set in Claude Code (`/config`).
+- **150,000 tokens (warn)**: "Context 150K in \<title\>: wrap up and
+  /compact". The statusline segment becomes yellow at the same point.
+- **180,000 tokens (alert)**: "Context 180K in \<title\>: compact now". The
+  statusline segment becomes red.
+- **When Claude Code compacts automatically**: the `PreCompact` hook runs
+  first and sends "Auto-compact starting: \<title\>". Thus, you know that the
+  compaction is about to start. This tool does not change when it occurs.
+  Auto-compact stays as you set it in Claude Code (`/config`).
 
 ## Run at login (optional)
 
-Not installed by default. To have the dashboard start automatically, save
-the following as `~/Library/LaunchAgents/com.example.claude-usage.plist`,
-replacing `/path/to/repo` with this repo's absolute path, `/path/to/uv` with
-the output of `command -v uv`, and `YOU` with your user name:
+The installer does not install this. To start the dashboard automatically
+at login, do these steps:
+
+1. Save the text below as
+   `~/Library/LaunchAgents/com.example.claude-usage.plist`.
+2. Replace `/path/to/repo` with the absolute path of this repo.
+3. Replace `/path/to/uv` with the output of `command -v uv`.
+4. Replace `YOU` with your user name.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -265,119 +418,138 @@ the output of `command -v uv`, and `YOU` with your user name:
 </plist>
 ```
 
-Then load or unload it with:
+Then load or unload it with these commands:
 
     launchctl load ~/Library/LaunchAgents/com.example.claude-usage.plist
     launchctl unload ~/Library/LaunchAgents/com.example.claude-usage.plist
 
-`RunAtLoad` starts it at login (and immediately when you `load` it);
-`KeepAlive` restarts it if it ever exits. `EnvironmentVariables.PATH`
-includes `/opt/homebrew/bin` and `/usr/local/bin` so `npx`/`node` are found
-by ccusage when launchd starts this with its own minimal environment
-(launchd does not inherit your shell's `PATH`); without it, costs would
-show "unavailable" even though the same command works fine from a
-terminal. `WorkingDirectory` matches `--directory` above for the same
-reason: launchd's default working directory is `/`, not this repo.
+The keys do these tasks:
+
+- `RunAtLoad` starts the dashboard at login. It also starts the dashboard
+  immediately when you `load` it.
+- `KeepAlive` restarts the dashboard if it stops.
+- `EnvironmentVariables.PATH` includes `/opt/homebrew/bin` and
+  `/usr/local/bin`. Thus, ccusage finds `npx`/`node` when launchd starts the
+  dashboard with its own minimal environment. launchd does not inherit the
+  `PATH` of your shell. Without this key, costs show "unavailable", although
+  the same command works correctly from a terminal.
+- `WorkingDirectory` matches `--directory` above for the same reason. The
+  default directory of launchd is `/`, not this repo.
 
 ## Logs
 
-Every command logs to stderr: one line per refresh (files read, sessions
-updated, calls, skill loads, whether ccusage produced dollars, elapsed
-time), one WARNING per skipped transcript line or ccusage failure, and the
-one-time schema migration when it runs. A background refresh that fails
-logs the traceback and retries at the next interval instead of stopping.
-Add `-v` for a DEBUG line per transcript file read (path, byte offset,
-bytes, calls):
+Each command writes logs to stderr:
+
+- one line for each refresh: files read, sessions updated, calls, skill
+  loads, if ccusage produced dollars, and elapsed time
+- one `WARNING` line for each skipped transcript line or ccusage failure
+- the one-time schema migration, when it runs
+
+If a background refresh fails, it logs the traceback. It then tries again at
+the next interval and does not stop. Add `-v` to get one `DEBUG` line for
+each transcript file read (path, byte offset, bytes, calls):
 
     uv run usage -v serve
 
-## Troubleshooting
+## Problems and solutions
 
-- **The status line is blank or shows an error** — the statusline runs
-  the Python 3.15 interpreter that `install.sh` pinned. If uv removed it
-  (`uv python uninstall`, a clean `~/.local/share/uv`), re-run
-  `./install.sh` to pin the current one.
-- **No notifications appear** — most likely macOS permissions or Focus
-  mode. Check System Settings → Notifications → terminal-notifier is
-  allowed, and that Focus/Do Not Disturb is not silencing it. Re-run the
-  manual test command above.
-- **Costs show "unavailable"** — `ccusage` could not run. Check that
-  `npx -y ccusage@20.0.48 --version` works from a terminal (needs Node);
-  check the server logs for the last error. Tokens are always shown even
-  when dollars are not.
-- **The dashboard looks stale** — the background refresh runs every 60
-  seconds (`config.json`'s `refresh_seconds`); the page shows a "stale
-  since" note if a refresh has been failing. Restarting `usage serve`
-  forces an immediate refresh.
+- **The status line is blank or shows an error.** The statusline runs the
+  Python 3.15 interpreter that `install.sh` pinned. uv can remove that
+  interpreter, for example with `uv python uninstall` or a clean
+  `~/.local/share/uv`. In that case, run `./install.sh` again to pin the
+  current interpreter.
+- **No notifications appear.** The probable cause is macOS permissions or
+  Focus mode. Do these checks:
+  - Make sure that System Settings → Notifications → terminal-notifier is
+    allowed.
+  - Make sure that Focus/Do Not Disturb does not silence it.
+  - Run the manual test command above again.
+- **Costs show "unavailable".** `ccusage` could not run. Make sure that
+  `npx -y ccusage@20.0.48 --version` works from a terminal. This command
+  needs Node. Look in the server logs for the last error. The dashboard
+  always shows tokens, also when it cannot show dollars.
+- **The dashboard looks stale.** The background refresh runs every 60
+  seconds (`refresh_seconds` in `config.json`). If a refresh fails again and
+  again, the page shows a "stale since" note. Restart `usage serve` to get
+  an immediate refresh.
 
 ## How it works
 
-`usage/parser.py` incrementally reads Claude Code's JSONL transcripts under
-`~/.claude/projects/`, tracking a byte offset per file so repeat parses are
-cheap; `usage/store.py` keeps the parsed records in a local SQLite database
-(`usage.db`) so the server never re-parses on every request. The store
-carries a schema version and migrates itself on open; a version step
-(version 3 added the skills tables and per-transcript call attribution,
-version 4 the local hour on every call and the per-hour rollup behind the
-day view) resets every file offset so the next refresh re-reads all
-transcripts once, which takes a few seconds. `usage/projection.py` turns
-the rollup into the period's totals, trend and chart series.
-`usage/skills.py` folds the per-load rows into the skills table. `usage/cost.py`
-joins those records against `npx ccusage`'s JSON output to attach dollar
-figures. `usage/server.py` serves the dashboard's static assets and a
-`/api/summary` endpoint from a background refresh thread, plus `/api/office`
-(usage/office.py), which reads the statusline's state files and no database; the
-handler joins on the notice board's numbers for today (`board_stats` in
-usage/summary.py), the one part of that payload that comes from the
-database. `/api/summary` takes
-`?period=YYYY-MM` or `?period=YYYY-MM-DD` (`?month=` still works) and
-answers 400 for anything else. The server listens on 127.0.0.1 only and
-answers 403 to any request whose `Host` header is not `127.0.0.1:<port>`
-or `localhost:<port>`, so a web page that rebinds its own DNS name to
-127.0.0.1 cannot read your session titles and messages. The page is fluid
-up to 1680px wide.
-`statusline/statusline.py` is invoked by Claude Code itself after every
-assistant message, reading the same session's live context size from stdin;
-it never parses transcripts or calls the network, so it stays fast.
-`hooks/precompact-notify.sh` is the one piece that runs as a Claude Code
-hook rather than being invoked by this project.
+- `usage/parser.py` reads the JSONL transcripts of Claude Code under
+  `~/.claude/projects/` incrementally. It keeps a byte offset for each file,
+  so that repeated parses are cheap.
+- `usage/store.py` keeps the parsed records in a local SQLite database
+  (`usage.db`). Thus, the server does not parse again on each request. The
+  store has a schema version and migrates itself when it opens. Each version
+  step resets all file offsets. Then the next refresh reads all transcripts
+  again one time, which takes a few seconds. These are two version steps:
+  - Version 3 added the skills tables and the call attribution for each
+    transcript.
+  - Version 4 added the local hour on each call and the hourly rollup that
+    the day view uses.
+- `usage/projection.py` turns the rollup into the totals, the trend and the
+  chart series of the period.
+- `usage/skills.py` puts the rows for each load together into the skills
+  table.
+- `usage/cost.py` joins those records with the JSON output of `npx ccusage`
+  to add dollar figures.
+- `usage/server.py` serves the static assets of the dashboard and two
+  endpoints:
+  - `/api/summary`. A background refresh thread supplies its data. It takes
+    `?period=YYYY-MM` or `?period=YYYY-MM-DD`. `?month=` also still works.
+    For all other values, it answers 400.
+  - `/api/office` (usage/office.py). It reads the state files of the
+    statusline and no database. The handler adds the numbers of today for
+    the notice board (`board_stats` in usage/summary.py). These numbers are
+    the only part of this payload that comes from the database.
+- The server listens only on 127.0.0.1. It answers 403 to each request
+  whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>`. Thus,
+  a web page that rebinds its own DNS name to 127.0.0.1 cannot read your
+  session titles and messages. The page is fluid up to 1680px wide.
+- Claude Code itself runs `statusline/statusline.py` after each assistant
+  message. The statusline reads the live context size of the same session
+  from stdin. It never parses transcripts or uses the network, so it stays
+  fast.
+- `hooks/precompact-notify.sh` is the only part that runs as a Claude Code
+  hook. This project does not run it directly.
 
 ## Dependencies and updates
 
-Dependabot (`.github/dependabot.yml`) checks for updates every week. It
+Dependabot (`.github/dependabot.yml`) checks for updates each week. It
 covers these ecosystems:
 
-- npm: three.js. The dashboard serves a copy vendored in
+- npm: three.js. The dashboard serves a vendored copy in
   `dashboard/vendor/three`. The root `package.json` pins that version so
-  Dependabot can see it. Nothing runs `npm install`.
+  that Dependabot can see it. No process runs `npm install`.
 - uv: pytest, through `uv.lock`.
 - github-actions: the actions in `.github/workflows/tests.yml`.
 
-A Dependabot pull request that bumps `three` fails CI until you re-vendor.
-To re-vendor, check out its branch and run:
+A Dependabot pull request that bumps `three` fails CI until you vendor it
+again. To vendor it again, check out its branch and run this command:
 
     python3.15 scripts/vendor_three.py
 
 You can also use `uv run scripts/vendor_three.py`. The script downloads the
-tarball, checks it against the sha512 in `package-lock.json`, and rewrites
-the vendored files and `VERSION`. Commit the result.
+tarball and checks it against the sha512 in `package-lock.json`. Then it
+writes the vendored files and `VERSION` again. Commit the result.
 
-Dependabot alerts and security updates are off until you turn them on. Go
-to **Settings → Code security** in the GitHub repository and enable both.
+Dependabot alerts and security updates are off until you turn them on. To
+turn them on, go to **Settings → Code security** in the GitHub repository.
+Then enable both.
 
 ## Design
 
-`docs/design.md` is the design document. Code comments such as
-"spec Sec 12" refer to its sections.
+`docs/design.md` is the design document. Code comments such as "spec Sec 12"
+refer to its sections.
 
 ## Tests
 
     uv run --locked pytest -q
 
-This installs pytest from `uv.lock` into `.venv`, on Python 3.15.
+This command installs pytest from `uv.lock` into `.venv`, on Python 3.15.
 
 The node checks for the Office (`tests/office_*_check.js`) run as part of
-pytest when `node` is on the PATH, and `tests/test_office_browser.py` loads
-the office in headless Chrome when Chrome is installed. GitHub Actions
+pytest when `node` is on the PATH. `tests/test_office_browser.py` loads the
+Office in headless Chrome when Chrome is installed. GitHub Actions
 (`.github/workflows/tests.yml`) runs the whole suite on macOS with Python
-3.15 on every push to `main` and every pull request.
+3.15. It runs on each push to `main` and on each pull request.
