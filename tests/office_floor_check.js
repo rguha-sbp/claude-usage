@@ -243,6 +243,38 @@ function drive(projects) {
   return seen;
 }
 report.sim = { 1: drive(1), 4: drive(4), 12: drive(12) };
+
+/* A full pod finishes at once while as many new agents start: one done
+   intern hands back at a time, the others wait in their slots, and no
+   newcomer may be given a slot that is still stood in. */
+(function podTurnover() {
+  var data = payload(1);
+  var plan = F.build(data, THEMES[0]);
+  var lead = data.rooms[0].workers[0];
+  var sim = new window.OfficeSim.Sim({ wander: true });
+  var pod = function (prefix, state) {
+    var out = [];
+    for (var i = 0; i < F.POD; i++) out.push({ agent_id: prefix + i, type: 'Explore', state: state, parent: null, model: 'Haiku 4.5' });
+    return out;
+  };
+  var sync = function (agents) { sim.sync([Object.assign({}, lead, { agents: agents })], plan.places); };
+  sync(pod('old', 'running'));
+  var booked = null, settled = 0;
+  for (var t = 0; t < 90 * 30; t++) {
+    if (t % 30 === 0) sync(pod('old', 'done').concat(pod('new', 'running')));   // one poll a second
+    sim.tick(1 / 30);
+    // the walk in is long enough to hide a double booking, so check the slots, not the spots
+    var interns = sim.list().filter(function (ag) { return ag.kind === 'intern'; });
+    interns.forEach(function (ag) {
+      if (/\/old/.test(ag.id) && ag.state.pose === 'standing' && interns.some(function (b) { return /\/new/.test(b.id) && b.slot === ag.slot; })) {
+        booked = booked || ag.id + ' still stands in slot ' + ag.slot;
+      }
+    });
+    settled = interns.filter(function (ag) { return /\/new/.test(ag.id) && ag.state.pose === 'standing'; }).length;
+  }
+  expect(booked === null, 'a newcomer is never given a slot a done intern still stands in (' + booked + ')');
+  expect(settled === F.POD, 'newcomers fill the pod as the done interns walk away (' + settled + '/' + F.POD + ')');
+})();
 expect(report.sim[4].cooler || report.sim[12].cooler, 'workers drink at a water cooler');
 
 /* A session can end wherever its worker is: at the canteen, at the cooler

@@ -96,7 +96,7 @@ class _Tally(_Calls):
     doing: dict[str, str] | None = None
     handed_back: bool = False
     replied_last: bool = False
-    mid_turn: bool = False      # the model owes more: a tool result came back, or a message is still streaming
+    mid_turn: bool = False      # the model owes more: its last message has no stop_reason yet
     started: str | None = None
     last: str | None = None
 
@@ -112,12 +112,14 @@ class _Tally(_Calls):
             self.last = ts
         message = _as_dict(rec.get("message"))
         if rec.get("type") == "user":
-            self.mid_turn = bool(_blocks(rec, "tool_result"))
+            self.mid_turn = False
             return
         if rec.get("type") != "assistant" or not message:
             return
         # Claude Code writes one record per content block and sets
-        # `stop_reason` on the last block of each message only
+        # `stop_reason` on the last block of each message only. A trailing
+        # tool_result is not counted: an agent killed right after one would
+        # look busy for TOOL_PATIENCE instead of asleep (spec Sec 14)
         self.mid_turn = message.get("stop_reason") is None
         self.model = _as_str(message.get("model")) or self.model
         mid = _as_str(message.get("id")) or _as_str(rec.get("uuid"))
@@ -141,10 +143,12 @@ class _Tally(_Calls):
 
 
 def _advance[T: _Calls](t: T, path: Path) -> T | None:
-    """`t` with whatever was appended since `t.size` folded in, READ_BYTES
-    at a time so a long transcript's first read stays small; a file that
-    shrank was rewritten and is read again from the start. None when the
-    file is unreadable."""
+    """`t` with whatever was appended since `t.size` folded in, read
+    READ_BYTES at a time so a long transcript's first read stays small. Only
+    the unfinished last line is held between blocks, so one line longer than
+    READ_BYTES is held whole until its newline arrives. A file that shrank
+    was rewritten and is read again from the start. None when the file is
+    unreadable."""
     try:
         size = path.stat().st_size
         if size < t.size:
@@ -153,10 +157,14 @@ def _advance[T: _Calls](t: T, path: Path) -> T | None:
             return t
         with open(path, "rb") as fh:
             fh.seek(t.size)
-            cut = b""
+            cut = bytearray()                      # a cut last line waits for the next block or read
             while block := fh.read(READ_BYTES):
-                lines = (cut + block).split(b"\n")
-                cut = lines.pop()                  # a cut last line waits for the next block or read
+                end = block.rfind(b"\n")
+                if end < 0:                        # only the new block is searched: no rescan of `cut`
+                    cut += block
+                    continue
+                lines = (cut + block[:end]).split(b"\n")
+                cut = bytearray(block[end + 1:])
                 for line in lines:
                     t.size += len(line) + 1
                     try:
@@ -188,10 +196,10 @@ def _state(t: _Tally, now: datetime, working: timedelta, awaited: bool) -> str:
     stood QUIET_REPLY and its parent has the result. Running while it wrote
     something within `working` (the leads' own window), or, up to
     TOOL_PATIENCE, while it is busy: one of its tool calls waits on a
-    result, its parent's call (`awaited`) still waits on it, or its turn is
-    still open (`mid_turn`). The model writes nothing while it composes a
-    block, so a quiet file alone is not idleness. Asleep otherwise, like a
-    quiet lead (spec Sec 13.2)."""
+    result, its parent's call (`awaited`) still waits on it, or its last
+    message is still streaming (`mid_turn`). The model writes nothing while
+    it composes a block, so a quiet file alone is not idleness. Asleep
+    otherwise, like a quiet lead (spec Sec 13.2)."""
     quiet = _age(t.last, now)
     if t.handed_back or (t.replied_last and not awaited and quiet >= QUIET_REPLY):
         return "done"

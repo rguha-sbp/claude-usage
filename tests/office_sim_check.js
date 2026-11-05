@@ -139,7 +139,8 @@ for (var s2 = 0; s2 < 120 * 60; s2++) {
     lead.agents = [agentRec('pre', 'running'), agentRec('new', 'done'), agentRec('kid', 'running', 'new'),
                    agentRec('m1', 'running'), agentRec('m2', 'running'), agentRec('m3', 'running')];
     isim.sync([lead], IP);
-    overflow = Object.keys(isim.agents).filter(function (id) { return id.indexOf('L/') === 0 && isim.agents[id].server !== 'done'; }).length;
+    // 'new' is done but has not walked away yet: its slot is still its own
+    overflow = Object.keys(isim.agents).filter(function (id) { return id.indexOf('L/') === 0; }).length;
   }
   if (Math.abs(it - 50) < dt / 2) {                        // 'pre' goes quiet, then picks up again
     lead.agents[0] = agentRec('pre', 'asleep'); isim.sync([lead], IP);
@@ -162,7 +163,7 @@ expect(arrived, 'a new intern walks in to a pod slot');
 expect(nestedParent === 'L/new', 'a nested intern is tethered to the intern that spawned it');
 expect(handed && left, 'a done intern hands back at the desk and walks out');
 expect(leadStays, 'a lead waiting on its foreground interns never dozes');
-expect(overflow === 4, 'the pod holds four; the rest wait in the rail (' + overflow + ')');
+expect(overflow === 4, 'the pod holds four, a done intern still in its slot among them; the rest wait in the rail (' + overflow + ')');
 expect(Object.keys(isim.agents).filter(function (id) { return id.indexOf('L/') === 0; }).length === 0, 'interns leave when the payload drops them');
 out.interns = { preAtSlot: preAtSlot, arrived: arrived, handed: handed, left: left,
                 leadStays: leadStays, overflow: overflow, nestedParent: nestedParent };

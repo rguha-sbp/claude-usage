@@ -139,10 +139,11 @@ def test_parallel_tool_calls_close_one_by_one(tmp_path):
     assert _by_id(reader.session_agents(transcript, NOW)[0])["a3"].state == "done"
 
 
-def test_an_open_turn_is_work_for_up_to_fifteen_minutes(tmp_path):
-    """No record while the model composes its next block: after a tool
-    result, or after a block of a message that has more to come (no
-    `stop_reason` yet), the agent is still at work."""
+def test_an_open_message_is_work_for_up_to_fifteen_minutes(tmp_path):
+    """No record while the model composes its next block: after a block of
+    a message that has more to come (no `stop_reason` yet), the agent is
+    still at work. A trailing tool result is not: an agent killed right
+    after one sleeps once the working window passes."""
     transcript, folder = _session(tmp_path)
     answered = _agent(folder, "a1", [assistant_msg("m1", iso(1), content=[tool("Grep", pattern="p")], stop_reason="tool_use"),
                                      tool_result_msg("hit", iso(1))])
@@ -151,11 +152,11 @@ def test_an_open_turn_is_work_for_up_to_fifteen_minutes(tmp_path):
                           tool_result_msg("hit", iso(1)), user_msg(INTERRUPTED, iso(1))])
     reader = AgentReader(tmp_path)
     states = {a.agent_id: a.state for a in reader.session_agents(transcript, NOW)[0]}
-    assert states == {"a1": "running", "a2": "running", "a3": "asleep"}                  # 4 min quiet
+    assert states == {"a1": "asleep", "a2": "running", "a3": "asleep"}                   # 4 min quiet
     later = NOW + timedelta(minutes=12)                                                  # 16 min after iso(1)
     assert {a.state for a in reader.session_agents(transcript, later)[0]} == {"asleep"}
-    _append(answered, user_msg(INTERRUPTED, iso(2)))
-    assert _by_id(reader.session_agents(transcript, NOW)[0])["a1"].state == "asleep"     # the turn was closed
+    _append(answered, assistant_msg("m4", iso(2), content=[{"type": "thinking", "thinking": "."}]))
+    assert _by_id(reader.session_agents(transcript, NOW)[0])["a1"].state == "running"    # streaming again
 
 
 def test_long_transcripts_are_read_in_bounded_steps(tmp_path, monkeypatch):

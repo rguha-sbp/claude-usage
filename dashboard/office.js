@@ -91,18 +91,23 @@ function render(data) {
   $('office-hint').textContent = n.total
     ? n.working + ' working · ' + (n.total - n.working) + ' asleep · updated ' + clock(data.generated_at)
     : 'No session has reported in yet';
-  /* Without WebGL nothing draws a frame, so no `drawn` hook ever lets a
-     leaver out: the simulation would only grow. The rail and the hint are
-     the whole Office then. */
-  if (!state.view) return;
   state.workers = {};
   state.subs = {};
-  const flat = [];
+  const flat = [], listed = [];
   data.rooms.forEach((room) => room.workers.forEach((worker) => {
     state.workers[worker.session_id] = worker;
     flat.push(worker);
-    (worker.agents || []).forEach((sub) => { state.subs[worker.session_id + '/' + sub.agent_id] = { worker, sub }; });
+    listed.push(worker.session_id);
+    (worker.agents || []).forEach((sub) => {
+      const id = worker.session_id + '/' + sub.agent_id;
+      state.subs[id] = { worker, sub };
+      listed.push(id);
+    });
   }));
+  /* Without WebGL nothing draws a frame, so no `drawn` hook ever lets a
+     leaver out: the simulation would only grow. The rail, the hint and a
+     roster of the payload's own agents are the whole Office then. */
+  if (!state.view) { renderRoster(listed); return; }
   const light = sky();
   const sig = n.total ? floorSig(data, light) : '';
   const fresh = sig !== state.sig;
@@ -111,7 +116,7 @@ function render(data) {
   sim.sync(flat, plan ? plan.places : {});
   remember();
   markVacant();
-  if (!plan) { renderRoster(); return; }
+  if (!plan) { renderRoster(onFloor()); return; }
   stage.style.setProperty('--sky-top', light.top);
   stage.style.setProperty('--sky-bottom', light.bottom);
   stage.classList.toggle('night', light.stars);
@@ -126,7 +131,7 @@ function render(data) {
     { working: worker.state === 'working', title: worker.title, extra: extraOf(worker) }));
   view.scenery.setBoard(boardLines(data, n));
   if (reduceMotion && state.visible) view.still();
-  renderRoster();
+  renderRoster(onFloor());
 }
 
 /* The empty-office note replaces the canvas only once the last leaver is
@@ -288,13 +293,19 @@ function open(id) {
 // -------------------------------------------------------------- roster
 /* The canvas is one picture; screen readers and keyboards get a list of
    every worker instead, in the order of the rooms. */
-function renderRoster() {
+
+/* Who is on the floor, in the order the sim met them. */
+function onFloor() {
+  return sim.list().map((agent) => agent.id);
+}
+
+function renderRoster(ids) {
   const rows = [];
-  sim.list().forEach((agent) => {
-    const info = state.subs[agent.id], worker = state.workers[agent.id];
-    if (worker) rows.push([agent.id, worker.title + ', ' + (worker.state === 'working' ? 'working' : 'waiting') +
+  ids.forEach((id) => {
+    const info = state.subs[id], worker = state.workers[id];
+    if (worker) rows.push([id, worker.title + ', ' + (worker.state === 'working' ? 'working' : 'waiting') +
       (worker.model ? ', ' + worker.model : '')]);
-    else if (info) rows.push([agent.id, 'Intern ' + info.sub.type + ' for ' + info.worker.title + ': ' + info.sub.description]);
+    else if (info) rows.push([id, 'Intern ' + info.sub.type + ' for ' + info.worker.title + ': ' + info.sub.description]);
   });
   const sig = JSON.stringify(rows);
   if (sig === state.rosterSig) return;

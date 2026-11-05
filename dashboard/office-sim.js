@@ -464,12 +464,16 @@ window.OfficeSim = (function () {
     });
   };
 
+  /* A slot stays taken until its intern walks away from it: to the
+     hand-off spot it then holds, or out. A done intern whose hand-off spot
+     is busy still stands in its slot, so its agent's state cannot say. */
   Sim.prototype.freeSlot = function (lead, places) {
     var taken = {};
     var self = this;
     Object.keys(this.agents).forEach(function (id) {
       var b = self.agents[id];
-      if (b.lead === lead && b.server !== 'done' && b.server !== 'gone') taken[b.slot] = true;
+      if (b.lead !== lead || b.leaving || b.held === spotKey(b.places.handoff)) return;
+      taken[b.slot] = true;
     });
     for (var s = 0; s < places.pod.length; s++) if (!taken[s]) return s;
     return -1;
