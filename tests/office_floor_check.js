@@ -259,6 +259,8 @@ report.sim = { 1: drive(1), 4: drive(4), 12: drive(12) };
   };
   var sync = function (agents) { sim.sync([Object.assign({}, lead, { agents: agents })], plan.places); };
   sync(pod('old', 'running'));
+  sync(pod('old', 'done').concat(pod('new', 'running')));
+  var waited = sim.agents[lead.session_id].queued;   // every slot still stood in by a done intern
   var booked = null, settled = 0;
   for (var t = 0; t < 90 * 30; t++) {
     if (t % 30 === 0) sync(pod('old', 'done').concat(pod('new', 'running')));   // one poll a second
@@ -274,6 +276,8 @@ report.sim = { 1: drive(1), 4: drive(4), 12: drive(12) };
   }
   expect(booked === null, 'a newcomer is never given a slot a done intern still stands in (' + booked + ')');
   expect(settled === F.POD, 'newcomers fill the pod as the done interns walk away (' + settled + '/' + F.POD + ')');
+  expect(waited === F.POD && sim.agents[lead.session_id].queued === 0,
+         'the desk counts the running agents with no slot, until they have one (' + waited + ')');
 })();
 expect(report.sim[4].cooler || report.sim[12].cooler, 'workers drink at a water cooler');
 

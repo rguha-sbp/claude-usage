@@ -78,9 +78,11 @@ function floorSig(data, light) {
     room.workers.map((worker) => worker.session_id + '/' + Cast.tierOf(worker.model).key).join(',')).join('|');
 }
 
-/* Interns past the pod's slots: counted on the desk instead. */
-function extraOf(worker) {
-  return (worker.agents || []).filter((sub) => sub.state !== 'done').length - Floor.POD;
+/* Who the roster names, on and off WebGL: every lead, and the sub-agents
+   still at work. A done one is the rail's business, even while its intern
+   stands on the floor. */
+function rostered(id) {
+  return Boolean(state.workers[id] || (state.subs[id] && state.subs[id].sub.state !== 'done'));
 }
 
 function render(data) {
@@ -128,7 +130,7 @@ function render(data) {
     view.setFloor(plan, state.theme, { night: light.lamps, desks }, light);
   }
   flat.forEach((worker) => view.scenery.setDesk(worker.session_id,
-    { working: worker.state === 'working', title: worker.title, extra: extraOf(worker) }));
+    { working: worker.state === 'working', title: worker.title, extra: sim.agents[worker.session_id].queued }));
   view.scenery.setBoard(boardLines(data, n));
   if (reduceMotion && state.visible) view.still();
   renderRoster(onFloor());
@@ -247,9 +249,11 @@ function leadCard(worker) {
     (worker.last_message ? '<div class="msg"><small>Waiting on you</small>' + esc(worker.last_message) + '</div>' : '');
 }
 
+/* The card floats over a figure, so without a view there is nowhere to
+   put it: the roster's own text carries the detail then. */
 function showCard(id) {
   const info = state.subs[id], worker = state.workers[id];
-  if (!id || (!info && !worker)) return hideCard();
+  if (!state.view || !id || (!info && !worker)) return hideCard();
   const card = $('office-card');
   card.innerHTML = info ? internCard(info) : leadCard(worker);
   card.hidden = false;
@@ -301,7 +305,7 @@ function onFloor() {
 
 function renderRoster(ids) {
   const rows = [];
-  ids.forEach((id) => {
+  ids.filter(rostered).forEach((id) => {
     const info = state.subs[id], worker = state.workers[id];
     if (worker) rows.push([id, worker.title + ', ' + (worker.state === 'working' ? 'working' : 'waiting') +
       (worker.model ? ', ' + worker.model : '')]);

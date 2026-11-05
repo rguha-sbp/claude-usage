@@ -361,7 +361,7 @@ window.OfficeSim = (function () {
     var h = hash(id);
     return { id: id, rng: rng(h), pos: copy(pos), vel: { x: 0, y: 0 }, facing: 1,
              bubble: false, popped: false, done: false, leaving: false, state: null,
-             route: [], wp: 0, held: null, lane: lane, kind: 'lead',
+             route: [], wp: 0, held: null, lane: lane, kind: 'lead', queued: 0,
              look: { hair: h % 5, glasses: ((h >>> 3) % 3) === 0, coat: ((h >>> 5) % 4) === 0 } };
   }
 
@@ -434,7 +434,7 @@ window.OfficeSim = (function () {
         a.speed = tier.speed;
         if (relaid) relocate(self, a, places);
       }
-      self.syncInterns(w, places, seen, relaid);
+      a.queued = self.syncInterns(w, places, seen, relaid);
     });
     Object.keys(this.agents).forEach(function (id) {
       if (!seen[id]) self.agents[id].server = 'gone';
@@ -444,16 +444,19 @@ window.OfficeSim = (function () {
 
   /* One intern per listed sub-agent that is not done, while the pod has a
      free slot; one already on stage follows its agent's state. A sub-agent
-     that finished before we ever saw it only shows in the rail. */
+     that finished before we ever saw it only shows in the rail. Returns how
+     many sub-agents wait for a slot: the sim alone knows which have none,
+     as a done intern can hold its slot for a while (freeSlot). */
   Sim.prototype.syncInterns = function (w, places, seen, relaid) {
     var self = this;
+    var queued = 0;
     (w.agents || []).forEach(function (sub) {
       var id = w.session_id + '/' + sub.agent_id;
       var a = self.agents[id];
       if (!a) {
         if (sub.state === 'done') return;
         var slot = self.freeSlot(w.session_id, places);
-        if (slot < 0) return;                       // the pod is full: the name plate counts it
+        if (slot < 0) { queued += 1; return; }      // the pod is full: the name plate counts it
         a = self.spawnIntern(id, w.session_id, sub, places, slot);
       }
       seen[id] = true;
@@ -462,6 +465,7 @@ window.OfficeSim = (function () {
       a.background = !!sub.background;
       a.parentId = sub.parent ? w.session_id + '/' + sub.parent : w.session_id;
     });
+    return queued;
   };
 
   /* A slot stays taken until its intern walks away from it: to the
