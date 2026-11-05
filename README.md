@@ -17,9 +17,9 @@ value.
 ## What it looks like
 
 The Office tab shows each Claude Code session that runs now as a worker at
-a desk. This image shows the Studio theme at midday.
+a desk. This image shows the Studio theme by day.
 
-![The Office tab in the Studio theme at midday. Workers sit at desks in one area for each project.](docs/images/office-studio-day.png)
+![The Office tab in the Studio theme by day. Workers sit at desks in one area for each project.](docs/images/office-studio-day.png)
 
 ## Requirements
 
@@ -32,8 +32,16 @@ a desk. This image shows the Studio theme at midday.
   notifications. The dashboard and the statusline also work on Linux.
 
 The default notifier path is `/opt/homebrew/bin/terminal-notifier`. This is
-the Homebrew path on Apple Silicon. On an Intel Mac, set `notifier` in
-`config.json` to `/usr/local/bin/terminal-notifier`.
+the Homebrew path on Apple Silicon. On an Intel Mac, the path is
+`/usr/local/bin/terminal-notifier`. Set this path in two locations:
+
+- Set `notifier` in `config.json`. The statusline notifications use this
+  value.
+- Set the `USAGE_NOTIFIER` environment variable in the shell that starts
+  Claude Code. The `PreCompact` hook uses this value. The hook does not read
+  `config.json`.
+
+Step 3 of `install.sh` checks only the Apple Silicon path.
 
 ## Quick start
 
@@ -46,8 +54,9 @@ Then open <http://127.0.0.1:8765>. The page refreshes itself every 60
 seconds. You can also use these commands:
 
 - `uv run usage refresh` runs one parse-and-cost pass on demand.
-- `uv run usage report` prints a plain-text table of the sessions of the
-  current month to the terminal.
+- `uv run usage report` prints the totals of the current month and the 10
+  sessions with the highest spend. Add `--month YYYY-MM` to select a
+  different month.
 
 Without uv, any Python 3.15 interpreter works the same way. You do not
 install dependencies. The macOS `python3` is 3.9, which is too old. Thus,
@@ -59,7 +68,9 @@ name the interpreter explicitly:
 
 ## What the four tabs show
 
-Each tab shows one **period**: a whole month or a single day. The header has
+The Month, Sessions and Projects tabs show one **period**: a whole month or
+a single day. The Office tab shows the sessions that run now. It ignores the
+period. The header has
 two pickers. The first picker selects the month. The second picker can
 select a day of that month with data. "Whole month" goes back to the month.
 
@@ -154,13 +165,16 @@ Use these controls:
 The image at the top of this file shows the Studio theme. These images show
 the two other themes:
 
-| Loft at night | Greenhouse at midday |
+| Loft at night | Greenhouse by day |
 | --- | --- |
-| ![The Office in the Loft theme at night, with lamps and stars.](docs/images/office-loft-night.png) | ![The Office in the Greenhouse theme at midday.](docs/images/office-greenhouse-day.png) |
+| ![The Office in the Loft theme at night, with lamps and stars.](docs/images/office-loft-night.png) | ![The Office in the Greenhouse theme by day.](docs/images/office-greenhouse-day.png) |
+
+The screenshots use a fixed sky hour (`?hour=NN` in the URL).
 
 #### Workers
 
-A lead is the worker for the main session of a project. A worker types while
+A lead is the worker for a Claude Code session. A sub-agent is an intern
+(see below). A worker types while
 its session is busy. It also types while its session waits on a foreground
 sub-agent. Now and then it leans back to think. When the session has been
 quiet for a minute, the worker dozes at the desk with z's. Sleepers stay
@@ -179,13 +193,15 @@ waves goodbye.
 
 ![A close-up of the Office floor. Some workers type at their desks. Other workers sleep at their desks with z's above them.](docs/images/office-closeup.png)
 
-The session id selects the hair, the glasses and the coat of each worker.
-The model selects the shirt. Thus, the same session always looks the same.
-Only leads get the crown and the halo, never sub-agent interns. The model
-tiers look like this (`dashboard/office-cast.js`):
+The session id selects the hair, the glasses, the coat and the shirt of
+each worker. Thus, the same session always looks the same. The model
+selects the tier. The tier sets the headgear, the halo, the chair and the
+size of the worker. Only leads get the crown and the halo, never sub-agent
+interns. The model tiers look like this (`dashboard/office-cast.js`):
 
-- Opus wears a crown at a desk with gold trim.
-- Fable wears a monocle.
+- Opus wears a crown and a halo, and sits on a gold chair.
+- Fable wears a monocle and a Fable coat, has a halo, and sits on a gold
+  chair.
 - Sonnet is an ordinary worker.
 - Haiku is smaller and quicker, and wears headphones.
 
@@ -249,7 +265,7 @@ The thresholds are in `config.json` at the repo root:
   yellow. The first time that a session goes above this value, the
   statusline sends the "wrap up and /compact" notification (see below).
 - `statusline.alert_tokens` (default 180000): the statusline segment becomes
-  red and sends the "compact now" notification.
+  red. The statusline sends the "compact now" notification.
 
 Edit `config.json`. The dashboard applies the change on the next refresh.
 The statusline applies the change on its next run. You do not need to parse
@@ -261,7 +277,9 @@ again or restart.
 
 This is the only part of the project that touches files outside this repo.
 It runs in six steps. The first step must succeed. Each later step reports
-OK or WARN. Thus, one absent prerequisite does not stop the other steps.
+its own result. Thus, one absent prerequisite does not stop the other steps.
+Steps 3 to 5 report OK or WARN. Step 2 reports OK or FAIL. If step 2
+fails, `install.sh` exits 1 at the end.
 
 1. The script finds a Python 3.15 interpreter with
    `uv python find --system 3.15`. If it finds none, it runs
@@ -311,9 +329,9 @@ new statusline command.
 ### One-time notification permission
 
 The first time that `terminal-notifier` sends a notification, macOS asks you
-to allow or block its notifications. `install.sh` sends one automatically,
-so that you get that prompt immediately. If you miss the prompt or it does
-not appear, do these steps:
+to allow or block its notifications. Step 6 of `install.sh` prints a test
+command. Run that command to get the prompt immediately. If you miss the
+prompt or it does not appear, do these steps:
 
 1. Open **System Settings → Notifications**.
 2. Find `terminal-notifier`.
