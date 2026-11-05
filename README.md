@@ -43,6 +43,9 @@ the Homebrew path on Apple Silicon. On an Intel Mac, the path is
 
 Step 3 of `install.sh` checks only the Apple Silicon path.
 
+The `PreCompact` hook reads `jq` only from `/usr/bin/jq`. If that file is
+missing, the hook exits silently and sends no notification.
+
 ## Quick start
 
 With [uv](https://docs.astral.sh/uv/), you do not need a separate install
@@ -55,7 +58,8 @@ seconds. You can also use these commands:
 
 - `uv run usage refresh` runs one parse-and-cost pass on demand.
 - `uv run usage report` prints the totals of the current month and the 10
-  sessions with the highest spend. Add `--month YYYY-MM` to select a
+  sessions with the highest spend. If dollar figures are not available, the
+  report ranks the sessions by tokens. Add `--month YYYY-MM` to select a
   different month.
 
 Without uv, any Python 3.15 interpreter works the same way. You do not
@@ -69,10 +73,10 @@ name the interpreter explicitly:
 ## What the four tabs show
 
 The Month, Sessions and Projects tabs show one **period**: a whole month or
-a single day. The Office tab shows the sessions that run now. It ignores the
-period. The header has
-two pickers. The first picker selects the month. The second picker can
-select a day of that month with data. "Whole month" goes back to the month.
+a single day. The Office tab shows the sessions that run now. It ignores
+the period. The header has two pickers. The first picker selects the month.
+The second picker can select a day of that month with data. "Whole month"
+goes back to the month.
 
 Click a bar in the month chart to open that day. The URL holds the period
 (`?period=2026-09` or `?period=2026-09-14`). Thus, you can bookmark and
@@ -174,11 +178,10 @@ The screenshots use a fixed sky hour (`?hour=NN` in the URL).
 #### Workers
 
 A lead is the worker for a Claude Code session. A sub-agent is an intern
-(see below). A worker types while
-its session is busy. It also types while its session waits on a foreground
-sub-agent. Now and then it leans back to think. When the session has been
-quiet for a minute, the worker dozes at the desk with z's. Sleepers stay
-asleep at their desks.
+(see below). A worker types while its session is busy. It also types while
+its session waits on a foreground sub-agent. Now and then it leans back to
+think. When the session has been quiet for a minute, the worker dozes at the
+desk with z's. Sleepers stay asleep at their desks.
 
 Sometimes a lead that works takes a short break between thoughts. The break
 is one of these:
@@ -194,10 +197,12 @@ waves goodbye.
 ![A close-up of the Office floor. Some workers type at their desks. Other workers sleep at their desks with z's above them.](docs/images/office-closeup.png)
 
 The session id selects the hair, the glasses, the coat and the shirt of
-each worker. Thus, the same session always looks the same. The model
-selects the tier. The tier sets the headgear, the halo, the chair and the
-size of the worker. Only leads get the crown and the halo, never sub-agent
-interns. The model tiers look like this (`dashboard/office-cast.js`):
+each worker. Thus, the same session always looks the same.
+
+The model selects the tier. The tier sets the headgear, the halo, the chair
+and the size of the worker. The Fable tier also replaces the coat with the
+Fable coat. Only leads get the crown and the halo, never sub-agent interns.
+The model tiers look like this (`dashboard/office-cast.js`):
 
 - Opus wears a crown and a halo, and sits on a gold chair.
 - Fable wears a monocle and a Fable coat, has a halo, and sits on a gold
