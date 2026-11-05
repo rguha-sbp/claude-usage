@@ -3,10 +3,11 @@ Part 2: file discovery, incremental offsets and subagent attribution."""
 import json
 import logging
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ def _as_int(v: Any) -> int:
     return 0
 
 
-def _as_str(v: Any) -> Optional[str]:
+def _as_str(v: Any) -> str | None:
     """Returns v only when it is a non-empty str, else None."""
     return v if isinstance(v, str) and v != "" else None
 
@@ -68,14 +69,13 @@ def _as_list(v: Any) -> list:
 
 
 def parse_ts(ts: str) -> datetime:
-    s = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
-    dt = datetime.fromisoformat(s)
+    dt = datetime.fromisoformat(ts)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
 
 
-def _safe_parse_ts(ts: str) -> Optional[datetime]:
+def _safe_parse_ts(ts: str) -> datetime | None:
     """parse_ts, but a str that is not valid ISO-8601 is treated as missing
     rather than crashing parse_records (a non-empty str is not guaranteed to
     be a well-formed timestamp)."""
@@ -134,19 +134,19 @@ class SkillLoad:
     kind: str
     ts: str
     sidechain: bool = False
-    body_bytes: Optional[int] = None
+    body_bytes: int | None = None
     agent_id: str = ""  # same meaning as Call.agent_id
 
 
 @dataclass
 class SessionAgg:
     session_id: str
-    title: Optional[str] = None
-    first_prompt: Optional[str] = None
-    project: Optional[str] = None
-    cwd: Optional[str] = None
-    first_ts: Optional[str] = None
-    last_ts: Optional[str] = None
+    title: str | None = None
+    first_prompt: str | None = None
+    project: str | None = None
+    cwd: str | None = None
+    first_ts: str | None = None
+    last_ts: str | None = None
     turns: int = 0
     tool_calls: int = 0
     compactions: int = 0
@@ -155,17 +155,17 @@ class SessionAgg:
     cold_restarts: int = 0
     rebuild_tokens: int = 0
     subagent_tokens: int = 0
-    last_call_ts: Optional[str] = None
-    read_counts: Dict[str, int] = field(default_factory=dict)
-    calls: List[Call] = field(default_factory=list)
-    skill_loads: List[SkillLoad] = field(default_factory=list)
-    skill_bodies: Dict[str, int] = field(default_factory=dict)  # skill name -> exact body bytes
-    compactions_at: List[Tuple[str, str]] = field(default_factory=list)  # (agent_id, ts) of each compact summary
+    last_call_ts: str | None = None
+    read_counts: dict[str, int] = field(default_factory=dict)
+    calls: list[Call] = field(default_factory=list)
+    skill_loads: list[SkillLoad] = field(default_factory=list)
+    skill_bodies: dict[str, int] = field(default_factory=dict)  # skill name -> exact body bytes
+    compactions_at: list[tuple[str, str]] = field(default_factory=list)  # (agent_id, ts) of each compact summary
 
     def display_title(self) -> str:
         return self.title or self.first_prompt or self.session_id
 
-    def merge_from(self, other: "SessionAgg") -> None:
+    def merge_from(self, other: SessionAgg) -> None:
         if self.title is None:
             self.title = other.title
         if self.first_prompt is None:
@@ -190,7 +190,7 @@ class SessionAgg:
         self.compactions_at.extend(other.compactions_at)
 
 
-def _usage_from(message: dict) -> Optional[Dict[str, int]]:
+def _usage_from(message: dict) -> dict[str, int] | None:
     u = message.get("usage")
     # If usage is present but not a dict at all, the record is malformed; signal with None
     # (parse_records skips the record rather than guessing at a shape).
@@ -241,20 +241,20 @@ def _text_of(content) -> str:
 
 
 def parse_records(records: Iterable[dict], session_id: str,
-                  prev_last_call_ts: Optional[str] = None,
-                  sidechain: bool = False, agent_id: Optional[str] = None) -> SessionAgg:
+                  prev_last_call_ts: str | None = None,
+                  sidechain: bool = False, agent_id: str | None = None) -> SessionAgg:
     """`agent_id`: the subagent transcript's file stem, None/"" for the
     session's main transcript (see Call.agent_id)."""
     agg = SessionAgg(session_id=session_id)
     aid = agent_id or ""
-    merged: Dict[str, Call] = {}
-    order: List[str] = []
+    merged: dict[str, Call] = {}
+    order: list[str] = []
 
     # Track max content_bytes and unique read paths per message_id
-    msg_content_bytes: Dict[str, int] = {}
-    msg_read_paths: Dict[str, Dict[str, bool]] = {}  # message_id -> {file_path: True}
-    seen_skill_loads: Set[Tuple[str, str]] = set()  # (message_id, skill) -- streaming snapshots repeat blocks
-    last_hook_event: Optional[str] = None  # hookName of the latest hook_success record, e.g. "SessionStart:startup"
+    msg_content_bytes: dict[str, int] = {}
+    msg_read_paths: dict[str, dict[str, bool]] = {}  # message_id -> {file_path: True}
+    seen_skill_loads: set[tuple[str, str]] = set()  # (message_id, skill) -- streaming snapshots repeat blocks
+    last_hook_event: str | None = None  # hookName of the latest hook_success record, e.g. "SessionStart:startup"
 
     for rec in records:
         if not isinstance(rec, dict):
@@ -423,7 +423,7 @@ def parse_records(records: Iterable[dict], session_id: str,
 class TranscriptFile:
     path: Path
     session_id: str
-    parent_session_id: Optional[str]  # set for subagent transcripts
+    parent_session_id: str | None  # set for subagent transcripts
 
 
 @dataclass
@@ -432,27 +432,27 @@ class FileState:
     size: int
     mtime: float
     offset: int
-    last_call_ts: Optional[str] = None
+    last_call_ts: str | None = None
 
 
 @dataclass
 class ChunkResult:
     agg: SessionAgg
     new_offset: int
-    warnings: List[str]
+    warnings: list[str]
 
 
 @dataclass
 class ParseResult:
-    chunks: Dict[str, SessionAgg]          # keyed by (parent) session id; only sessions with new data
-    file_states: Dict[str, FileState]      # updated states for every file read this round
-    warnings: List[str]
-    present_paths: Set[str]                # every transcript path that exists now
+    chunks: dict[str, SessionAgg]          # keyed by (parent) session id; only sessions with new data
+    file_states: dict[str, FileState]      # updated states for every file read this round
+    warnings: list[str]
+    present_paths: set[str]                # every transcript path that exists now
 
 
-def discover(claude_dir: Path) -> List[TranscriptFile]:
+def discover(claude_dir: Path) -> list[TranscriptFile]:
     projects = claude_dir / "projects"
-    out: List[TranscriptFile] = []
+    out: list[TranscriptFile] = []
     if not projects.is_dir():
         return out
     for project_dir in sorted(p for p in projects.iterdir() if p.is_dir()):
@@ -468,7 +468,7 @@ def discover(claude_dir: Path) -> List[TranscriptFile]:
     return out
 
 
-def _peek_first_ts(path: Path) -> Optional[str]:
+def _peek_first_ts(path: Path) -> str | None:
     """Best-effort timestamp of a transcript file's first record, read
     without parsing the whole file. Used only to order transcript files
     deterministically before feeding them to the store (see
@@ -491,7 +491,7 @@ def _peek_first_ts(path: Path) -> Optional[str]:
     return None
 
 
-def _discovery_sort_key(tf: "TranscriptFile") -> Tuple[float, float, int, str]:
+def _discovery_sort_key(tf: TranscriptFile) -> tuple[float, float, int, str]:
     """Sort key for ordering discovered transcript files before they are
     parsed and fed to the store: earliest first-record timestamp first,
     falling back to file mtime when no usable timestamp is found. File
@@ -523,15 +523,15 @@ def _discovery_sort_key(tf: "TranscriptFile") -> Tuple[float, float, int, str]:
 
 
 def parse_file(path: Path, session_id: str, offset: int = 0,
-               prev_last_call_ts: Optional[str] = None, sidechain: bool = False,
-               agent_id: Optional[str] = None) -> ChunkResult:
+               prev_last_call_ts: str | None = None, sidechain: bool = False,
+               agent_id: str | None = None) -> ChunkResult:
     """Read complete lines from `path` starting at `offset`. A line that is
     not valid JSON, or that parses to something other than a JSON object, is
     never allowed to raise: it is skipped and recorded in warnings (spec §6),
     capped at MAX_FILE_WARNINGS entries per file plus a final "...N more"
     summary so one badly corrupted file cannot flood the warnings list."""
-    records: List[dict] = []
-    warnings: List[str] = []
+    records: list[dict] = []
+    warnings: list[str] = []
     overflow = 0
     consumed = offset
     with path.open("rb") as fh:
@@ -570,11 +570,11 @@ def parse_file(path: Path, session_id: str, offset: int = 0,
     return ChunkResult(agg=agg, new_offset=consumed, warnings=warnings)
 
 
-def parse_incremental(claude_dir: Path, states: Dict[str, FileState]) -> ParseResult:
-    chunks: Dict[str, SessionAgg] = {}
-    new_states: Dict[str, FileState] = {}
-    warnings: List[str] = []
-    present: Set[str] = set()
+def parse_incremental(claude_dir: Path, states: dict[str, FileState]) -> ParseResult:
+    chunks: dict[str, SessionAgg] = {}
+    new_states: dict[str, FileState] = {}
+    warnings: list[str] = []
+    present: set[str] = set()
     # Sorted by chronology (see _discovery_sort_key), not discover()'s
     # project/filename order, so ParseResult.chunks -- built below by first
     # occurrence of each owner session -- is populated in a deterministic,

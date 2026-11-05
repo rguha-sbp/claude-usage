@@ -29,6 +29,13 @@ window.OfficeCast = (function () {
     return CORE;
   }
 
+  /* An intern dresses by its model too, but the crown and the aura belong
+     to leads: whatever runs a sub-agent, it wears its lanyard instead. */
+  function internTierOf(model) {
+    var tier = tierOf(model);
+    return Object.assign({}, tier, { crown: tier.crown === 'crown' ? null : tier.crown, aura: false });
+  }
+
   /* The scene is lit by the viewer's own clock. `light` scales the room
      lightness, `lamps` turns the desk lamps on, `stars` fills the sky. */
   var SKIES = [
@@ -56,6 +63,18 @@ window.OfficeCast = (function () {
     return h >>> 0;
   }
 
+  /* mulberry32: the one seeded random source (habits in office-sim.js, the
+     decor fill in office-floor.js), so the same seed always plays the same. */
+  function rng(seed) {
+    var t = seed >>> 0;
+    return function () {
+      t = (t + 0x6D2B79F5) >>> 0;
+      var r = Math.imul(t ^ (t >>> 15), 1 | t);
+      r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
   /* Tool families (spec Sec 13.4): one table for leads and interns. The
      family picks the pose class and the glyph over the figure's head. */
   var FAMILIES = {
@@ -75,10 +94,10 @@ window.OfficeCast = (function () {
   }
 
   /* An intern's lanyard: the same colour for the same agent type, always. */
-  var BADGES = ['hsl(200 70% 48%)', 'hsl(150 55% 40%)', 'hsl(32 85% 50%)',
-                'hsl(280 50% 56%)', 'hsl(350 65% 52%)', 'hsl(48 85% 45%)'];
+  var BADGES = ['hsl(200, 70%, 48%)', 'hsl(150, 55%, 40%)', 'hsl(32, 85%, 50%)',      // commas: three.js
+                'hsl(280, 50%, 56%)', 'hsl(350, 65%, 52%)', 'hsl(48, 85%, 45%)'];      // reads them too
   function badgeOf(type) { return BADGES[hash(String(type || '')) % BADGES.length]; }
 
-  return { TIERS: TIERS, tierOf: tierOf, skyOf: skyOf, SKIES: SKIES,
-           hash: hash, FAMILIES: FAMILIES, familyOf: familyOf, badgeOf: badgeOf };
+  return { TIERS: TIERS, tierOf: tierOf, internTierOf: internTierOf, skyOf: skyOf, SKIES: SKIES,
+           hash: hash, rng: rng, FAMILIES: FAMILIES, familyOf: familyOf, badgeOf: badgeOf };
 })();

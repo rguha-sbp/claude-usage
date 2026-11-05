@@ -14,7 +14,9 @@ instead of dollars; nothing is estimated or guessed.
 
 ## Requirements
 
-- Python 3.9 or later. There are no Python dependencies.
+- Python 3.15 or later. There are no Python dependencies.
+- [uv](https://docs.astral.sh/uv/). `install.sh` uses it to find or
+  install Python 3.15, and `uv run` picks 3.15 from `.python-version`.
 - Claude Code, which writes the transcripts under `~/.claude`.
 - Optional: Node, so that `npx ccusage` can produce dollar figures.
 - Optional, macOS only: `terminal-notifier` and `jq` for the desktop
@@ -35,12 +37,13 @@ seconds; `uv run usage refresh` runs one parse-and-cost pass on demand, and
 `uv run usage report` prints a plain-text table of the current month's
 sessions to the terminal.
 
-Without uv, plain Python 3.9+ works the same way, no dependencies to
-install:
+Without uv, any Python 3.15 interpreter works the same way, no
+dependencies to install. The macOS `python3` is 3.9, which is too old, so
+name the interpreter explicitly:
 
-    python3 -m usage serve
-    python3 -m usage refresh
-    python3 -m usage report
+    python3.15 -m usage serve
+    python3.15 -m usage refresh
+    python3.15 -m usage report
 
 ## What the four tabs show
 
@@ -69,42 +72,41 @@ or `?period=2026-09-14`), so a day view can be bookmarked and reloaded.
 - **Projects** — the same figures rolled up by project directory, useful
   for seeing which repo or client is actually costing the most.
 - **Office** — every Claude Code session that is running right now as a
-  small worker at a desk, in an isometric campus: one room per project,
-  each with a water cooler, a plant and a doorway, and out in front a
-  plaza with a canteen, a notice board and a server room. A worker types
-  while its session is busy, leaning back to think now and then, and
-  slumps over the desk with z's once the session has been quiet for a
-  minute. Sleepers get up occasionally: a drink at the cooler, a chat in
-  the aisle with another sleeper from the same room, or a walk out to the
-  canteen — the one place where workers from different projects stand
-  together and talk. A session called back to work walks home first. When
-  the session's process exits the worker walks out through the door and
-  fades. Each worker's hair, glasses and coat come from its session id and
-  its shirt from its model, so the same session always looks the same.
-  The model decides the rest: Opus wears a crown and keeps a trophy on a
-  gold-trimmed desk, Fable a monocle and a silk coat beside an orchid,
-  Sonnet is an ordinary worker and Haiku is smaller, quicker and wears
-  headphones (`dashboard/office-cast.js`). The notice board carries the
-  day's real numbers — spend so far, the busiest project, how many
-  sessions are awake — and the racks in the server room blink faster while
-  sessions are working. The whole scene is lit by your own clock: morning,
-  afternoon, sunset, then dark windows, stars and desk lamps after hours.
-  The behaviour is a small state machine per worker with steering along
-  waypoints (`dashboard/office-sim.js`), the campus layout and scenery are
-  pure functions (`dashboard/office-world.js`), and `dashboard/office.js`
-  is the controller that fetches and animates. Sub-agents show up as interns
-  beside their lead (tethered to whoever spawned them, with a glyph for the
-  tool they are using), and the Agents rail lists each one with its type,
-  task, model, tokens, tool count and current tool; finished ones stay
-  greyed for two hours. None of the first three
-  touch the DOM, so node drives them in `tests/office_*_check.js`. Hover
-  for the title, model and how long it has been in that state, plus the
-  last thing the session said when it is asleep (usually the question it
-  is waiting on). Click to open the session on the Sessions tab. State
-  comes from the statusline alone: every run stamps the session's file
-  under `~/.claude/usage-state/` with the time, working directory, model,
-  transcript path and the Claude process id. No hooks, and nothing in
-  the office ever acts on a session. Thresholds live in `config.json`
+  worker at a desk on an open-plan office floor drawn in three.js: one
+  neighbourhood per project, with a server room, meeting rooms, a kitchen,
+  a lounge, a library and reception around them. Pick a theme in the panel
+  head (Studio, Loft or Greenhouse); drag to pan, scroll to zoom. A worker
+  types while its session is busy (or waits on a foreground sub-agent),
+  leaning back to think now and then, and dozes at the desk with z's once
+  the session has been quiet for a minute. Sleepers stay asleep at their
+  desks. A working lead sometimes takes a short break between thoughts: a
+  drink at the cooler, a chat with a colleague from the same project, or a
+  walk to the kitchen or the lounge, where workers from different projects
+  meet. When the session's process exits the worker walks to the door and
+  waves goodbye. Each worker's hair, glasses and coat come from its session
+  id and its shirt from its model, so the same session always looks the
+  same. Only leads, never sub-agent interns, get the crown and the halo:
+  Opus wears a crown at a gold-trimmed desk, Fable a monocle, Sonnet is an
+  ordinary worker and Haiku is smaller, quicker and wears headphones
+  (`dashboard/office-cast.js`). The notice board carries the day's real
+  numbers and each desk screen lights while its session works. The light
+  follows your own clock, with stars and lamps after hours.
+  Sub-agents show up as interns at their lead's pod, tethered to whoever
+  spawned them, with a glyph for the tool they are using; the Agents rail
+  lists each one with its type, task, model, tokens, tool count and current
+  tool, and keeps finished ones greyed for two hours. Hover a worker for
+  the title, model and how long it has been in that state, plus the last
+  thing the session said when it is asleep. Click to open the session on
+  the Sessions tab. The layout (`dashboard/office-floor.js`), the themes
+  (`office-themes.js`) and the behaviour (`office-sim.js`, a small state
+  machine per worker with steering along walkways) are DOM-free, so node
+  drives them in `tests/office_*_check.js`; `office-3d.js` and the modules
+  it imports draw them, and `office.js` is the controller. three.js is
+  vendored in `dashboard/vendor/three`, so the dashboard works offline.
+  State comes from the statusline alone: every run stamps the session's
+  file under `~/.claude/usage-state/` with the time, working directory,
+  model, transcript path and the Claude process id. No hooks, and nothing
+  in the office ever acts on a session. Thresholds live in `config.json`
   under `office` (`working_seconds`, default 60; `gone_after_seconds`,
   default 86400, used only when no process id is known).
 
@@ -150,17 +152,23 @@ the next statusline invocation; nothing needs to be reparsed or restarted.
     ./install.sh
 
 This is the only part of the project that touches anything outside this
-repo. It runs in five steps, each reporting OK or WARN so one missing
-prerequisite does not stop the rest:
+repo. It runs in six steps. The first one must succeed. Each later step
+reports OK or WARN, so one missing prerequisite does not stop the rest:
 
-1. Runs `python3 -m usage.install_settings` against
+1. Finds a Python 3.15 interpreter with `uv python find --system 3.15`.
+   If there is none, it runs `uv python install 3.15` and looks again. If
+   uv is not installed, or no 3.15 can be found or installed, it prints
+   FAIL and stops with exit 1.
+2. Runs `<python> -m usage.install_settings` with that interpreter against
    `~/.claude/settings.json`. `CLAUDE_CONFIG_DIR`, when set, overrides
    `config.json`'s `claude_dir` for every component (installer, hook,
    statusline and dashboard), so if it is set this step writes
    `$CLAUDE_CONFIG_DIR/settings.json` instead. This step:
    - backs up the existing file first, to
      `~/.claude/settings.json.bak-YYYYMMDD-HHMMSS`;
-   - sets `statusLine` to run `statusline/statusline.py` from this repo;
+   - sets `statusLine` to run `statusline/statusline.py` from this repo
+     with the absolute path of that interpreter (re-running the installer
+     replaces an older `python3 ...` entry);
    - adds a `PreCompact` hook (matcher `auto`) that runs
      `hooks/precompact-notify.sh`, replacing any earlier registration of
      that same hook script and leaving every other hook and settings key
@@ -174,15 +182,15 @@ prerequisite does not stop the rest:
    If the existing settings file is not valid JSON, this step fails,
    prints one line explaining why, and does not touch the file; every
    later step still runs, but `install.sh` exits 1 at the end.
-2. Installs `terminal-notifier` with Homebrew if it is not already at
+3. Installs `terminal-notifier` with Homebrew if it is not already at
    `/opt/homebrew/bin/terminal-notifier` (prints manual install
    instructions if Homebrew itself is missing).
-3. Checks that `npx -y ccusage@latest --version` prints a version; if not,
+4. Checks that `npx -y ccusage@20.0.48 --version` prints a version; if not,
    this is a warning, not a failure — the dashboard still works, showing
    tokens instead of dollars.
-4. Creates `~/.claude/usage-state/`, where the statusline keeps its
+5. Creates `~/.claude/usage-state/`, where the statusline keeps its
    per-session notification state.
-5. Prints the start command, the dashboard URL, and a one-line reminder
+6. Prints the start command, the dashboard URL, and a one-line reminder
    about the one-time notification permission (see below).
 
 Start a new Claude Code session afterwards so it picks up the new
@@ -197,7 +205,7 @@ Settings → Notifications**, find `terminal-notifier`, and allow it. You can
 also test manually with a fake statusline payload above the warn threshold:
 
     echo '{"session_id":"test","session_name":"notification test","context_window":{"context_window_size":1000000,"used_percentage":19}}' \
-      | python3 statusline/statusline.py
+      | "$(uv python find --system 3.15)" statusline/statusline.py
 
 ## What the notifications say, and when
 
@@ -285,12 +293,16 @@ bytes, calls):
 
 ## Troubleshooting
 
+- **The status line is blank or shows an error** — the statusline runs
+  the Python 3.15 interpreter that `install.sh` pinned. If uv removed it
+  (`uv python uninstall`, a clean `~/.local/share/uv`), re-run
+  `./install.sh` to pin the current one.
 - **No notifications appear** — most likely macOS permissions or Focus
   mode. Check System Settings → Notifications → terminal-notifier is
   allowed, and that Focus/Do Not Disturb is not silencing it. Re-run the
   manual test command above.
 - **Costs show "unavailable"** — `ccusage` could not run. Check that
-  `npx -y ccusage@latest --version` works from a terminal (needs Node);
+  `npx -y ccusage@20.0.48 --version` works from a terminal (needs Node);
   check the server logs for the last error. Tokens are always shown even
   when dollars are not.
 - **The dashboard looks stale** — the background refresh runs every 60
@@ -319,12 +331,39 @@ handler joins on the notice board's numbers for today (`board_stats` in
 usage/summary.py), the one part of that payload that comes from the
 database. `/api/summary` takes
 `?period=YYYY-MM` or `?period=YYYY-MM-DD` (`?month=` still works) and
-answers 400 for anything else. The page is fluid up to 1680px wide.
+answers 400 for anything else. The server listens on 127.0.0.1 only and
+answers 403 to any request whose `Host` header is not `127.0.0.1:<port>`
+or `localhost:<port>`, so a web page that rebinds its own DNS name to
+127.0.0.1 cannot read your session titles and messages. The page is fluid
+up to 1680px wide.
 `statusline/statusline.py` is invoked by Claude Code itself after every
 assistant message, reading the same session's live context size from stdin;
 it never parses transcripts or calls the network, so it stays fast.
 `hooks/precompact-notify.sh` is the one piece that runs as a Claude Code
 hook rather than being invoked by this project.
+
+## Dependencies and updates
+
+Dependabot (`.github/dependabot.yml`) checks for updates every week. It
+covers these ecosystems:
+
+- npm: three.js. The dashboard serves a copy vendored in
+  `dashboard/vendor/three`. The root `package.json` pins that version so
+  Dependabot can see it. Nothing runs `npm install`.
+- uv: pytest, through `uv.lock`.
+- github-actions: the actions in `.github/workflows/tests.yml`.
+
+A Dependabot pull request that bumps `three` fails CI until you re-vendor.
+To re-vendor, check out its branch and run:
+
+    python3.15 scripts/vendor_three.py
+
+You can also use `uv run scripts/vendor_three.py`. The script downloads the
+tarball, checks it against the sha512 in `package-lock.json`, and rewrites
+the vendored files and `VERSION`. Commit the result.
+
+Dependabot alerts and security updates are off until you turn them on. Go
+to **Settings → Code security** in the GitHub repository and enable both.
 
 ## Design
 
@@ -333,8 +372,12 @@ hook rather than being invoked by this project.
 
 ## Tests
 
-    python3 -m pytest -q
+    uv run --locked pytest -q
 
-or, with uv (also installs pytest into an isolated environment):
+This installs pytest from `uv.lock` into `.venv`, on Python 3.15.
 
-    uv run --group dev pytest -q
+The node checks for the Office (`tests/office_*_check.js`) run as part of
+pytest when `node` is on the PATH, and `tests/test_office_browser.py` loads
+the office in headless Chrome when Chrome is installed. GitHub Actions
+(`.github/workflows/tests.yml`) runs the whole suite on macOS with Python
+3.15 on every push to `main` and every pull request.

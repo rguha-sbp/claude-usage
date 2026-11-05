@@ -55,7 +55,7 @@ usage/                Python package (stdlib only)
   projection.py       month-to-date, projection, last-month comparison, trends
   tips.py             heuristics -> per-session and month-level tips with savings
   server.py           http.server: static files + /api/summary, background refresh
-  __main__.py         `python3 -m usage serve|refresh|report`
+  __main__.py         `python3.15 -m usage serve|refresh|report`
 dashboard/
   index.html, app.js, styles.css
 statusline/
@@ -129,11 +129,13 @@ Each tip has: id, title, one-sentence explanation with the session's own numbers
 | repeated-reads | any file read ≥ 3 times | none |
 | thinking-heavy | thinking_tokens / output_tokens > 0.3 | none |
 
+Every tip also carries `doc`, a link to the Claude Code documentation section that backs its advice; the dashboard shows it under the tip (section 14).
+
 Month-level tips aggregate: total approximate saving from compact-earlier across sessions. (Revised 2026-09-10: the tool alerts only and never recommends or sets `autoCompactWindow`; the earlier pointer to that setting was removed.)
 
 ### 4.6 Server and page
 
-`python3 -m usage serve` binds `127.0.0.1:<port>` (default 8765). Serves `dashboard/` statically and `GET /api/summary?month=YYYY-MM` returning JSON: month figures, projection, trends, daily series (actual and projected), model split, token-type split, sessions (all fields plus tips), projects, `cost_available`, `threshold`, `generated_at`. A background thread refreshes parser and costs every 60 seconds; requests never trigger parsing.
+`python3.15 -m usage serve` binds `127.0.0.1:<port>` (default 8765). Serves `dashboard/` statically and `GET /api/summary?month=YYYY-MM` returning JSON: month figures, projection, trends, daily series (actual and projected), model split, token-type split, sessions (all fields plus tips), projects, `cost_available`, `threshold`, `generated_at`. A background thread refreshes parser and costs every 60 seconds; requests never trigger parsing.
 
 The page implements the approved mockup: large title with month, segmented tabs Month / Sessions / Projects addressable by URL hash, Auto / Light / Dark control persisted in localStorage, glass panels, trend strip (arrow, verdict sentence, magnitude, footnote), daily bars with faded projection and threshold share, model and token-type splits, title-led session table with working directory, detail panel with tips, projects table. Rows keep DOM identity across refreshes; a numeric cell that changed since the page was last focused gets a held highlight and a "+$x since you looked" note until the user interacts with the row. Charts are inline SVG rendered from data. `prefers-reduced-transparency` and `prefers-reduced-motion` are honoured. Colour is never the sole carrier of state.
 
@@ -155,7 +157,7 @@ Notifications: state file `~/.claude/usage-state/<session_id>.json` holds `annou
 
 ### 4.9 Settings changes (user-level `~/.claude/settings.json`)
 
-- `statusLine`: `{ "type": "command", "command": "python3 <repo>/statusline/statusline.py", "padding": 0 }`
+- `statusLine`: `{ "type": "command", "command": "<python> <repo>/statusline/statusline.py", "padding": 0 }`, where `<python>` is the absolute Python 3.15 path install.sh resolves (16.1)
 - `hooks.PreCompact`: matcher `auto`, command path to `precompact-notify.sh`
 - `autoCompactWindow`: not set (revised 2026-09-10: an earlier installer wrote 200000; the installer now removes that exact value and never writes one)
 - `cleanupPeriodDays`: 90
@@ -196,7 +198,7 @@ Manual acceptance: run against the real transcripts, compare session token total
   "port": 8765,
   "threshold_tokens": 200000,
   "statusline": { "warn_tokens": 150000, "alert_tokens": 180000 },
-  "ccusage_command": ["npx", "-y", "ccusage@latest"],
+  "ccusage_command": ["npx", "-y", "ccusage@20.0.48"],
   "claude_dir": "~/.claude",
   "notifier": "/opt/homebrew/bin/terminal-notifier",
   "refresh_seconds": 60
@@ -205,9 +207,9 @@ Manual acceptance: run against the real transcripts, compare session token total
 
 ## 9. Operations
 
-- Start: `python3 -m usage serve` from this directory, then open `http://127.0.0.1:8765`.
+- Start: `uv run usage serve` (or `python3.15 -m usage serve`) from this directory, then open `http://127.0.0.1:8765`.
 - Optional launchd agent `~/Library/LaunchAgents/com.example.claude-usage.plist` running the same command at login; documented, not installed by default.
-- Prerequisites: Python 3.9+ (system python3 is fine), `brew install terminal-notifier`, Node for `npx ccusage` (or `npm i -g ccusage`). First notification requires granting terminal-notifier permission in System Settings.
+- Prerequisites: uv and Python 3.15+ (install.sh installs 3.15 with uv if it is missing; the macOS system python3 is 3.9 and too old), `brew install terminal-notifier`, Node for `npx ccusage` (or `npm i -g ccusage`). First notification requires granting terminal-notifier permission in System Settings.
 
 ## 10. Deferred
 
@@ -371,7 +373,7 @@ A session's sub-agents live beside its transcript: `<transcript without .jsonl>/
 
 ### 13.2 `usage/agents.py`
 
-Database-free and office-free. `AgentReader` keeps, per agent transcript, a byte offset and running totals, and on each call reads only the bytes appended since (the parser's append-only assumption); a file that shrank is re-read from 0. A cut final line is left for the next read (the offset stops before it). Per agent it produces a typed record:
+Database-free and office-free. `AgentReader` keeps, per agent transcript and per lead transcript of a session with sub-agents, a byte offset and running totals, and on each call reads only the bytes appended since (the parser's append-only assumption); a file that shrank is re-read from 0. A cut final line is left for the next read (the offset stops before it). Per agent it produces a typed record:
 
 | field | source |
 |---|---|
@@ -383,15 +385,15 @@ Database-free and office-free. `AgentReader` keeps, per agent transcript, a byte
 | `tools`, `tool_mix` | count of tool_use blocks, and count per tool name; `SubagentHandback` is not counted (it is the hand-back, not work) |
 | `doing` | last tool_use as `{tool, target}`, target the first of `file_path`, `command`, `pattern`, `url`, `query`, `description`, trimmed to 80 chars; `{tool: "replying"}` when the last assistant record is text only; a record with only thinking leaves `doing` as it was |
 | `started`, `last` | first and last record `timestamp` |
-| `state` | `done` once the agent has called `SubagentHandback` (how current Claude Code sub-agents finish; checked against 39 local transcripts), or, for older transcripts, when the last assistant record is text only and nothing has been written for 10 seconds; else `stalled` when `last` is more than 15 minutes old; else `running` (a long Bash keeps an agent running though its file is quiet) |
+| `state` | `done` once the agent has called `SubagentHandback` (how current Claude Code sub-agents finish; checked against 39 local transcripts), or, for older transcripts, when the last assistant record is text only, its parent has the result, and nothing has been written for 10 seconds; else `running` while `last` is within the Office's working window (60 s), or within 15 minutes while the agent is busy; else `asleep` (section 14). Busy means one of the agent's own tool calls has no `tool_result` with its `tool_use_id` yet (a long Bash beside parallel Reads that have answered), or its parent (the lead, or the agent that spawned it) has the `Agent`/`Task` call with this agent's `toolUseId` still open, or its last message is still streaming: its last record is an assistant record without a `stop_reason` (Claude Code writes one record per content block and sets `stop_reason` on the last block only). A trailing `tool_result` does not count: many transcripts end on one, so an agent killed right after it would look busy for 15 minutes; it gets the 60 s working window instead (section 14). The model writes no record while it composes a long reply, so a quiet file alone does not mean idle. A background agent's call is answered at launch, so only its own calls count; an interrupted agent's call is answered with the interruption, so it sleeps once quiet |
 
-An agent without a meta file, or whose transcript holds no record yet, is skipped. `session_agents(transcript_path, now)` returns every running and stalled agent plus the done agents whose `last` is within 2 hours, capped at the 20 most recent done ones, and the count of done ones left out (`hidden`). Paths outside `claude_dir` are ignored, as in 12.2.
+An agent without a meta file, or whose transcript holds no record yet, is skipped. `session_agents(transcript_path, now)` returns every running and asleep agent plus the done agents whose `last` is within 2 hours, capped at the 20 most recent done ones, and the count of done ones left out (`hidden`). Paths outside `claude_dir` are ignored, as in 12.2.
 
 ### 13.3 Office payload
 
 `last_assistant_message` becomes `tail_activity(path, claude_dir)` returning `{last_message, doing}` from the same tail read; `doing` uses the same rule as 13.2. Each worker gains:
 
-- `doing`: the lead's own current tool, or `null`.
+- `doing`: the lead's own current tool while it works, or `null` (a sleeping lead shows none, section 14).
 - `agents`: the flat list from 13.2 (the tree is built by the client from `parent`).
 - `agents_hidden`: the `hidden` count.
 
@@ -402,7 +404,7 @@ An agent without a meta file, or whose transcript holds no record yet, is skippe
 - **Pods.** `office-world.js` gives each desk a pod of 4 standing slots beside it, emitted as `places[sid].pod` (spots, so the existing routing walks interns there). Desk pitch along a room's width grows from 1.5 to 2.25 tiles for every room, so geometry does not jump when an agent spawns. Running interns take slots in spawn order; beyond 4 the lead's name plate shows `+N`.
 - **Interns.** The worker figure at 0.72 scale with a lanyard badge coloured by a hash of `agentType` (stable per type); model-tier accessories apply. A tether line joins each intern to its actual parent figure (lead or intern), dashed for background agents.
 - **Tool families.** One table in `office-cast.js`, used for leads and interns: read (Read, Grep, Glob, LS: holding a page), edit (Edit, Write, MultiEdit, NotebookEdit: typing), shell (Bash, BashOutput: terminal glyph), web (WebFetch, WebSearch: globe), delegate (Agent, Task: pointing at its child), mcp (`mcp__*`: plug), anything else or replying: thinking.
-- **Intern behaviour** (`office-sim.js`, next to the worker machine, same `arrive` steering): Arriving (doorway to slot; the lead pops), Working (pose follows the tool family, changing only when the family changes), Stalled (slumped, `?` bubble), HandingBack on done (walks to the lead's desk, a beat, the lead pops), Leaving (out of the doorway, fade). A lead with any running intern never leaves its desk, even when its own session reads asleep.
+- **Intern behaviour** (`office-sim.js`, next to the worker machine, same `arrive` steering): Arriving (doorway to slot; the lead pops), Working (pose follows the tool family, changing only when the family changes), Napping (dozing in its slot while its agent is asleep), HandingBack on done (walks to the lead's desk, a beat, the lead pops), Leaving (out of the doorway, fade). Whether a lead works is the server's call alone (section 14).
 - **Hover card.** An intern shows type, description, model, elapsed, tokens, tool count and `doing`; a lead gains its `doing` line and "N interns running". Clicking an intern opens the parent session.
 - **Reduced motion.** Interns appear in their slots, tethers drawn, no walking, glyphs static.
 
@@ -421,3 +423,72 @@ New `usage/agents.py`, `dashboard/office-figures.js` (DOM-free: `figure`, `headg
 - Static: new scripts loaded before `office.js`, DOM-free ones without `document.`; `office-rail.js` reads only keys the payload produces; no emoji glyphs.
 - Node: `office_sim_check.js` (an intern arrives, works, hands back and leaves; a lead with running interns never leaves its desk); `office_world_check.js` (pod slots overlap no desk or each other); new `office_figures_check.js` (no `NaN` / `undefined`).
 - Screenshots at 1440px and 2560px from a seeded state dir with nested sub-agents.
+
+## 14. Revision 2026-11-05: sleep, interns, tips and hardening
+
+Requested on 2026-11-05: idle sessions and sub-agents must look asleep, only leads wear the crown, workers walk to the cooler only while they work, and every tip must cite the Claude Code documentation.
+
+- **Lead state.** The server decides it alone. A lead is `working` when its statusline stamp is within `office.working_seconds`, or while it waits on a `running` sub-agent that is not a background one (13.2: running while the lead's `Agent` call is open, up to 15 minutes of quiet); otherwise `asleep`, and `doing` is `null`. A lead whose own window has passed while only a background agent runs is `asleep` and shows no tool: the background agent's work is not its lead's. The client no longer upgrades a lead because an intern is busy.
+- **Sub-agent state.** `running`, `asleep` or `done` (13.2). `stalled` is gone; a quiet agent that is not busy (13.2: no open tool call of its own, no parent still waiting on it, and no message still streaming; a trailing tool result alone keeps it awake only for the 60 s working window, so an agent killed after one sleeps), or busy but quiet for 15 minutes, is `asleep` and its intern naps in its slot. The rail marks it with a `z` glyph and dims the row.
+- **Intern dress.** `office-cast.js` `internTierOf(model)` is the model's tier without the crown and the halo; other accessories stay.
+- **Breaks.** A sleeper never leaves its desk. After a Thinking beat a working lead takes a break with probability 0.3 (canteen, aisle chat with a working colleague, or the cooler). A break is an errand: the moment the session stops working the walker goes home and dozes, or walks out if the session is gone.
+- **Tips.** Each tip has `doc`, a `https://code.claude.com/docs/en/...#section` link, and its text was rewritten to say only what that page says (checked 2026-11-05): compacting at a natural break (prompt-caching), subagents keeping verbose output out of the main context while their own calls still count, the cache lifetime of one hour on a subscription and five minutes on an API key, `/clear` between unrelated tasks, specific prompts needing fewer file reads, `/effort` for simpler tasks, and loaded skills staying in the conversation.
+- **Hardening.** The server answers 403 unless `Host` is `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding), the name compared without case and with one trailing dot allowed (`localhost.`). The installer shell-quotes the repo path in the statusline and hook commands and still recognises its own hook when quoted. `ccusage` is pinned to `20.0.48` instead of `@latest`.
+- **CI.** `.github/workflows/tests.yml` runs pytest (which drives the node checks) on macOS with Python 3.9 and 3.13 (revised in 16: 3.15 only).
+
+## 15. Revision 2026-11-05: the Office in three.js
+
+Requested on 2026-11-05: replace the SVG campus with a three.js open-plan office floor, decorate it heavily but cleanly, offer a few themes to switch between, and make the people look like people. The server and the `/api/office` payload do not change. This replaces the SVG drawing of sections 12 and 13: `office-world.js`, `office-figures.js` and their node checks are gone.
+
+### 15.1 The floor plan
+
+`dashboard/office-floor.js` `build(data, theme)` is pure (no DOM, no three.js) and returns a plan in tile space (one tile is about a metre; x across, y from the back wall to the front):
+
+- a back band (server room, meeting room, kitchen, lounge, library), the main corridor, then bands of neighbourhoods, one per project, and a right column (a second meeting room, the printer corner, reception and the entrance door);
+- a neighbourhood is a fenced block of desk units: the desk, the lead's chair, and a pod of `POD` (4) standing slots for interns; a sign names the project and a water cooler stands at the end of the first row;
+- `places[session_id]` are the spots the simulation walks between (seat, cooler, two meeting spots, the pod, the handoff, the door and the canteen spots), each `{x, y, lane, via}` with every lane a horizontal aisle line;
+- decor is placed last and only where it touches no desk, partition, walk or spot. The floor grows to fit, the figures never shrink. Places do not depend on the theme.
+
+### 15.2 The simulation on the floor
+
+`office-sim.js` keeps its contract (12.3, 13.4, 14). Every shared spot (canteen tables, the cooler stand, the two meeting spots, a desk's hand-off spot) is held by one agent at a time through `freeSpot`, keyed by its position; pod slots stay assigned by `freeSlot` for an intern's whole stay. Two more changes. `GRIP = 8` in the `arrive` steering: without it a walker overshot at a corner and cut across furniture. And a leaver walks out from wherever it is: the door's `via` starts at the worker's own aisle, so `walkOut` follows the route the worker is on, back or ahead, to the nearest point of its way out (seat, aisle, the door's `via`, the door), then folds the out-and-back stretches. Every leg is one the floor already keeps clear. A re-layout (a session joins or leaves; the simulation sees a new `places` object) restarts every agent whose places moved, compared structurally, at its new seat, whatever it was doing: its position, route and target belong to the old floor, and only the new seat is known to be clear. `tests/office_floor_check.js` drives the simulation over real floors and fails on anyone who walks through a desk or a piece of decor, including sessions that end at the canteen, at another row's cooler or halfway along a walk, and a re-layout during a break.
+
+### 15.3 Themes
+
+`office-themes.js` is pure data: Studio (pale wood planks, planter partitions), Loft (concrete, brick partitions, warm lamps) and Greenhouse (terracotta tiles, vine partitions, a planted bed). A theme sets the palette by role, the floor pattern, the partition style, the decor weights and density, the centrepiece and the light. People are not themed. The picker in the panel head stores the choice in `localStorage` (`usage.office.theme`); `?office=<key>` previews a theme until the reader picks one (the pick drops the parameter) and `?hour=<0-23>` previews a time of day.
+
+### 15.4 Scenery
+
+- `office-kit.js`: unit shapes, the `Batch` that turns every static part into one `InstancedMesh` per (layer, shape), the material cache and canvas textures.
+- `office-decor.js`: one builder per decor kind and the desk.
+- `office-scenery.js`: the floor canvas, walls, windows, partitions, rooms, signs, the notice board and the desk screens. `setDesk(id, {working, title, extra})` lights a screen and writes the name plate and the `+N` counter, and `setBoard(lines)` writes the board, all without a rebuild; a label repaints only when its text changes. A rebuild disposes what it built, never the shared shapes, materials and textures (`shared` in `office-kit.js`).
+
+Static shadows are drawn once per rebuild (`shadowMap.autoUpdate = false`); figures use blob shadows.
+
+### 15.5 People
+
+`office-people.js` `Person` is a jointed figure (hips, knees, spine, shoulders, elbows, hands, a nodding head) with hair styles, glasses, a beard on some leads, and the tier's headgear (crown, monocle, headphones). Each simulation pose has a pose in `POSES` (typing, thinking, dozing, walking, waving, drinking, lounging, chatting, standing, handing, gone), blended over 0.35 s, with props (a cup, a tablet, a folder). A tool glyph, a speech bubble and z's float above the head. A leaver waves near the door.
+
+### 15.6 The view
+
+`office-3d.js` `OfficeView` owns the renderer, an orthographic isometric camera fitted to the floor, the light (hemisphere plus a sun, scaled by the theme and the viewer's clock), picking, drag to pan and wheel to zoom (1 to 4, about the pointer). A rebuild of a floor with the same footprint keeps the reader's pan and zoom. The loop runs only while the Office pane and the page are visible: full rate while anyone walks or the pointer drags, about 15 frames a second otherwise. Under reduced motion it draws one frame per update. Without WebGL the pane says so.
+
+three r187 is vendored in `dashboard/vendor/three` (the npm tarball's `three.module.js`, `three.core.js` and `LICENSE`, with sha256 values in `VERSION`) and resolved through an import map, so the dashboard needs no network.
+
+### 15.7 Controller, accessibility and tests
+
+`office.js` is an ES module: it fetches every 5 s, feeds the simulation and the view (the plan and the scenery are rebuilt only when the theme, the light or the rooms' sessions and tiers change), and owns the hover card, the theme picker, the Agents rail links and a screen-reader roster of buttons (one per worker). The empty-office note replaces the canvas only once the last figure has walked out. Tests: `tests/office_floor_check.js` (every floor size in every theme), `tests/office_themes_check.js` (complete themes, names the scenery draws), static checks for the import map and the vendored hashes, and `tests/test_office_browser.py`, which loads the office in headless Chrome against the real server and fails without a rendered frame or on a console error (skipped without Chrome).
+
+## 16. Revision 2026-11-05: Python 3.15 and Dependabot
+
+Requested on 2026-11-05: run on the latest Python, and let Dependabot cover every dependency, the vendored three.js included.
+
+### 16.1 Python 3.15 and the pinned interpreter
+
+`requires-python` is `>=3.15` and `.python-version` says `3.15`, so `uv run` and CI use 3.15. The code uses the 3.15 idiom: builtin generics, `X | None`, `type` aliases and `datetime.fromisoformat` reading a `Z` suffix itself.
+
+Claude Code runs the statusline command through a shell on every prompt. A bare `python3` there is the macOS system 3.9, which cannot import this code. `uv run` would pick the right version but adds its startup to every prompt. So install.sh resolves one interpreter with `uv python find --system 3.15`, after `uv python install 3.15` when none is found, and writes its absolute, shell-quoted path into `statusLine`. `--system` skips the repo `.venv`, which `uv` may recreate or the reader may delete. uv's path names the minor version (`cpython-3.15-macos-aarch64-none/bin/python3.15`, checked 2026-11-05), so a patch upgrade of 3.15 keeps it valid. If the interpreter is removed, the statusline fails visibly and the README troubleshooting says to re-run `install.sh`. `merge_settings` takes the interpreter as a parameter and stays pure; re-running the installer replaces an older `python3 ...` entry. Without uv the installer fails at once with a message, because every later Python step needs the interpreter. The PreCompact hook is bash and needs no Python.
+
+### 16.2 Dependabot
+
+`.github/dependabot.yml` checks `npm`, `uv` and `github-actions` weekly. A root `package.json` pins `three` exactly to the vendored version; it has no scripts and exists so Dependabot can see the copy in `dashboard/vendor/three`. `tests/test_dashboard_static.py` fails when `package.json`, `package-lock.json` and `dashboard/vendor/three/VERSION` disagree, so a Dependabot bump stays red until someone runs `scripts/vendor_three.py`. That script downloads the tarball from registry.npmjs.org, checks its sha512 against `package-lock.json`, reads only the members `package/build/three.module.js`, `package/build/three.core.js` and `package/LICENSE` by exact name (no other member is ever extracted, and a member that is not a regular file is rejected) and rewrites `VERSION`.

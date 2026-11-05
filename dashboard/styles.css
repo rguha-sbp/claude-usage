@@ -297,6 +297,7 @@ td small { color: var(--ink-3); }
 .tips li b { display: block; font-weight: 600; margin-bottom: 2px; }
 .tips li span { color: var(--ink-2); font-size: 13px; }
 .tips li .save { color: var(--down-good); font-weight: 600; font-style: normal; }
+.tips li .doc { display: block; width: fit-content; margin-top: 4px; font-size: 12px; color: var(--tint-ink); }
 .tips li:focus-visible { outline: 2px solid var(--tint); outline-offset: 2px; }
 /* a figure pointing at its tip lights the tip with the same held colour */
 .tips li.lit { background: var(--held); transition: background 600ms ease-out; }

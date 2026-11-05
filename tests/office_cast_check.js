@@ -54,6 +54,9 @@ expect(cast.badgeOf('Explore') === cast.badgeOf('Explore') && /^hsl\(/.test(cast
 expect(cast.badgeOf('Explore') !== cast.badgeOf('general-purpose') || cast.badgeOf('Plan') !== cast.badgeOf('Explore'),
   'different agent types get different badges');
 expect(cast.hash('abc') === cast.hash('abc') && cast.hash('abc') !== cast.hash('abd'), 'hash is stable');
+var r1 = cast.rng(42), r2 = cast.rng(42), draws = [r1(), r1(), r1()];
+expect(draws.join() === [r2(), r2(), r2()].join() && draws.every(function (v) { return v >= 0 && v < 1; }) &&
+  draws[0] !== draws[1], 'rng: one seed, one stream of draws in [0, 1)');
 
 console.log(JSON.stringify({ tiers: [lead.key, muse.key, core.key, swift.key], hours: keys,
                              families: ['Read', 'Edit', 'Bash', 'WebFetch', 'Agent', 'mcp__a', 'replying'].map(fam) }));

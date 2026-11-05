@@ -2,7 +2,7 @@
 from dataclasses import asdict
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .config import Config
 from .projection import compute_period, kind_of, prev_period
@@ -11,7 +11,7 @@ from .store import Store, UNKNOWN_PROJECT
 from .tips import month_tips, session_tips
 
 
-def abbreviate_path(path: Optional[str]) -> str:
+def abbreviate_path(path: str | None) -> str:
     """Replaces the user's home directory prefix with '~'; keeps the rest
     of the path unchanged. Returns '' for a missing/empty path."""
     if not path:
@@ -24,8 +24,8 @@ def abbreviate_path(path: Optional[str]) -> str:
     return path
 
 
-def serialize_session(sess: Dict[str, Any], threshold: int,
-                      skill_loads: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+def serialize_session(sess: dict[str, Any], threshold: int,
+                      skill_loads: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """`skill_loads`: this session's rows from Store.skill_usage (any month);
     they become `skills` (one row per skill/injection, heaviest first) and
     `skills_carried_tokens`, which the skill-heavy tip reads."""
@@ -39,11 +39,11 @@ def serialize_session(sess: Dict[str, Any], threshold: int,
     return out
 
 
-def _projects(store: Store, sessions: List[Dict[str, Any]], period: str, cost_available: bool) -> List[Dict[str, Any]]:
+def _projects(store: Store, sessions: list[dict[str, Any]], period: str, cost_available: bool) -> list[dict[str, Any]]:
     """One row per project for `period`. `sessions` must already be ordered
     most-recent-first (as `Store.sessions()` returns them) so that the first
     session encountered for a project is the one whose cwd is recorded."""
-    groups: Dict[str, Dict[str, Any]] = {}
+    groups: dict[str, dict[str, Any]] = {}
     for s in sessions:
         name = s.get("project") or UNKNOWN_PROJECT
         g = groups.setdefault(name, {"project": name, "cwd": abbreviate_path(s.get("cwd")),
@@ -54,7 +54,7 @@ def _projects(store: Store, sessions: List[Dict[str, Any]], period: str, cost_av
         g["ctx"] += s["input_tokens"] + s["cache_write_tokens"] + s["cache_read_tokens"]
     alloc = store.allocated_by_project(period) if cost_available else {}
     prev_alloc = store.allocated_by_project(prev_period(period)) if cost_available else {}
-    prev_tokens: Dict[str, int] = {}
+    prev_tokens: dict[str, int] = {}
     if not cost_available:
         for s in store.sessions(prev_period(period)):
             key = s.get("project") or UNKNOWN_PROJECT
@@ -69,7 +69,7 @@ def _projects(store: Store, sessions: List[Dict[str, Any]], period: str, cost_av
     return out
 
 
-def board_stats(store: Store, day: str, cost_available: bool) -> Dict[str, Any]:
+def board_stats(store: Store, day: str, cost_available: bool) -> dict[str, Any]:
     """Live numbers for the Office notice board (spec Sec 12.7): what `day`
     has cost so far and which project carries most of it. Falls back to
     tokens when ccusage is unavailable, exactly as the rest of the page does."""
@@ -98,8 +98,8 @@ def period_phrase(period: str, today: date) -> str:
     return "today" if period == today.isoformat() else "on this day"
 
 
-def build_summary(store: Store, cfg: Config, period: Optional[str], today: date,
-                  warnings: Optional[List[str]] = None) -> Dict[str, Any]:
+def build_summary(store: Store, cfg: Config, period: str | None, today: date,
+                  warnings: list[str] | None = None) -> dict[str, Any]:
     """`period` is a month 'YYYY-MM' or a day 'YYYY-MM-DD' (spec Sec 11);
     None means the current month, or the latest month with data."""
     months = store.months_with_data()
@@ -113,7 +113,7 @@ def build_summary(store: Store, cfg: Config, period: Optional[str], today: date,
     m = compute_period(store, period, today, threshold, cost_available)
     raw_sessions = store.sessions(period)
     loads = store.skill_usage(period)
-    loads_by_session: Dict[str, List[Dict[str, Any]]] = {}
+    loads_by_session: dict[str, list[dict[str, Any]]] = {}
     for l in loads:
         loads_by_session.setdefault(l["session_id"], []).append(l)
     sessions = [serialize_session(s, threshold, loads_by_session.get(s["session_id"])) for s in raw_sessions]

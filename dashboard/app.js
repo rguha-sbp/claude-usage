@@ -588,7 +588,7 @@
   function renderSkills(data) {
     var rows = data.skills;
     $('skills-hint').textContent = rows.length
-      ? 'Heaviest first \u00b7 what each load cost once it was re-read on every later call'
+      ? 'Heaviest first \u00b7 what each load cost once it was sent again with every later call'
       : 'Nothing was loaded ' + data.period_phrase;
     $('skills-note').textContent = data.skills_note;
     if (!rows.length) {
@@ -614,7 +614,9 @@
     var saving = (tip.saving_usd && tip.detail.indexOf('$') === -1)
       ? ' <em class="save">about ' + fmtUsd(tip.saving_usd) + ' saved</em>' : '';
     return '<li tabindex="-1" data-tip-id="' + esc(tip.id) + '">' + ICON.tip +
-      '<div><b>' + esc(tip.title) + '</b><span>' + esc(tip.detail) + saving + '</span></div></li>';
+      '<div><b>' + esc(tip.title) + '</b><span>' + esc(tip.detail) + saving + '</span>' +
+      '<a class="doc" href="' + esc(tip.doc) + '" target="_blank" rel="noopener noreferrer">Claude Code docs</a>' +
+      '</div></li>';
   }
 
   function renderDetail(data) {
@@ -850,8 +852,12 @@
   function syncUrl() {
     var hash = '#' + state.pane;
     if (state.pane === 'sessions' && state.selected) hash += '/' + encodeURIComponent(state.selected);
-    var query = state.period ? '?period=' + encodeURIComponent(state.period) : '';
-    history.replaceState(null, '', location.pathname + query + hash);
+    // Keep the other panes' parameters (the office's ?office= and ?hour=).
+    var params = new URLSearchParams(location.search);
+    params.delete('month'); // the old alias, now held as period
+    if (state.period) params.set('period', state.period); else params.delete('period');
+    var query = params.toString();
+    history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + hash);
   }
 
   function showPane(name, opts) {
@@ -983,9 +989,11 @@
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(remeasure);
   window.addEventListener('hashchange', routeFromHash);
 
-  // The Office tab (office.js) opens a live session from a worker: a live
-  // session has calls today, so it is in the current month's list.
+  // The Office tab (office.js) opens a live session from a worker (a live
+  // session has calls today, so it is in the current month's list) and
+  // dresses its theme picker like the header's.
   window.usageDashboard = {
+    selectSeg: selectSeg,
     openSession: function (id) {
       var thisMonth = new Date().toISOString().slice(0, 7);
       if (state.period && state.period.slice(0, 7) !== thisMonth) choosePeriod(null);

@@ -2,7 +2,6 @@
 import logging
 import time
 from datetime import datetime, timezone
-from typing import List
 
 from .config import Config
 from .cost import Runner, apply_costs, default_runner, fetch_costs
@@ -12,14 +11,14 @@ from .store import Store
 log = logging.getLogger(__name__)
 
 
-def refresh(store: Store, cfg: Config, runner: Runner = default_runner) -> List[str]:
+def refresh(store: Store, cfg: Config, runner: Runner = default_runner) -> list[str]:
     """Parse new/changed transcripts since the last round, persist them,
     recompute derived session/day rollups, then fetch costs from ccusage
     every time (never cached) and apply them. Costs unavailable this round
     leaves previously-stored cost rows untouched; `cost_available` reflects
     only this round's fetch."""
     started = time.monotonic()
-    warnings: List[str] = []
+    warnings: list[str] = []
     states = store.file_states()
     result = parse_incremental(cfg.claude_dir, states)
     # Explicit, deterministic order: earliest session first_ts first. This

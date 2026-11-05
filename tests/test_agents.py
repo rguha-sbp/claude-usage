@@ -4,11 +4,13 @@ import json
 from dataclasses import fields
 from datetime import datetime, timedelta, timezone
 
-from tests.helpers import assistant_msg, iso, user_msg, write_jsonl
+from tests.helpers import assistant_msg, iso, tool_result_msg, user_msg, write_jsonl
+from usage import agents as agents_module
 from usage.agents import AgentReader, SubAgent, doing_of
 from usage.parser import parse_records
 
 NOW = datetime(2026, 9, 1, 9, 5, 0, tzinfo=timezone.utc)      # iso(5)
+INTERRUPTED = "[Request interrupted by user]"                 # how Claude Code closes a turn it stopped
 
 
 def _session(tmp_path, sid="s1"):
@@ -94,12 +96,107 @@ def test_a_legacy_text_reply_is_done_once_quiet(tmp_path):
     assert a.state == "running" and a.doing == {"tool": "replying", "target": ""}
 
 
-def test_stalled_after_fifteen_quiet_minutes(tmp_path):
+def test_a_pending_tool_call_is_work_for_up_to_fifteen_minutes(tmp_path):
     transcript, folder = _session(tmp_path)
     _agent(folder, "a1", [assistant_msg("m1", iso(0), content=[tool("Bash", command="sleep 9999")])])
-    later = NOW + timedelta(minutes=11)                                                  # 16 min after iso(0)
-    assert _by_id(_read(tmp_path, transcript, later)[0])["a1"].state == "stalled"
     assert _by_id(_read(tmp_path, transcript)[0])["a1"].state == "running"                # a long Bash is still work
+    later = NOW + timedelta(minutes=11)                                                  # 16 min after iso(0)
+    assert _by_id(_read(tmp_path, transcript, later)[0])["a1"].state == "asleep"
+
+
+def test_asleep_once_quiet_past_the_working_window(tmp_path):
+    transcript, folder = _session(tmp_path)
+    _agent(folder, "a1", [assistant_msg("m1", iso(1), content=[tool("Grep", pattern="p")]),
+                          tool_result_msg("hit", iso(2)), user_msg(INTERRUPTED, iso(2))])
+    assert _by_id(_read(tmp_path, transcript)[0])["a1"].state == "asleep"                # 3 min quiet, turn closed
+    soon = datetime(2026, 9, 1, 9, 2, 30, tzinfo=timezone.utc)
+    assert _by_id(_read(tmp_path, transcript, soon)[0])["a1"].state == "running"         # 30 s quiet
+    patient = AgentReader(tmp_path, working_seconds=600)
+    assert _by_id(patient.session_agents(transcript, NOW)[0])["a1"].state == "running"
+
+
+def _append(path, *records):
+    with path.open("a") as fh:
+        for r in records:
+            fh.write(json.dumps(r) + "\n")
+
+
+def test_parallel_tool_calls_close_one_by_one(tmp_path):
+    """Three agents spawned in one turn: the first two results must not
+    clear the call that still waits on the third."""
+    calls = [tool("Agent", tid="toolu_a%d" % k, description="d") for k in (1, 2, 3)]
+    transcript = write_jsonl(tmp_path / "projects" / "-x" / "s1.jsonl", [
+        user_msg("go", iso(0)), assistant_msg("lead", iso(0), content=calls, stop_reason="tool_use"),
+        tool_result_msg("a", iso(2), tool_use_id="toolu_a1"), tool_result_msg("b", iso(2), tool_use_id="toolu_a2")])
+    folder = transcript.with_suffix("") / "subagents"
+    for k in (1, 2, 3):
+        _agent(folder, "a%d" % k, [assistant_msg("m%d" % k, iso(1), stop_reason="end_turn",
+                                                 content=[{"type": "text", "text": "Found it."}])])
+    reader = AgentReader(tmp_path)
+    states = {a.agent_id: a.state for a in reader.session_agents(transcript, NOW)[0]}
+    assert states == {"a1": "done", "a2": "done", "a3": "running"}                       # the lead still waits on a3
+    _append(transcript, tool_result_msg("c", iso(3), tool_use_id="toolu_a3"))
+    assert _by_id(reader.session_agents(transcript, NOW)[0])["a3"].state == "done"
+
+
+def test_an_open_message_is_work_for_up_to_fifteen_minutes(tmp_path):
+    """No record while the model composes its next block: after a block of
+    a message that has more to come (no `stop_reason` yet), the agent is
+    still at work. A trailing tool result is not: an agent killed right
+    after one sleeps once the working window passes."""
+    transcript, folder = _session(tmp_path)
+    answered = _agent(folder, "a1", [assistant_msg("m1", iso(1), content=[tool("Grep", pattern="p")], stop_reason="tool_use"),
+                                     tool_result_msg("hit", iso(1))])
+    _agent(folder, "a2", [assistant_msg("m2", iso(1), content=[{"type": "thinking", "thinking": "."}])])
+    _agent(folder, "a3", [assistant_msg("m3", iso(1), content=[tool("Grep", pattern="p")], stop_reason="tool_use"),
+                          tool_result_msg("hit", iso(1)), user_msg(INTERRUPTED, iso(1))])
+    reader = AgentReader(tmp_path)
+    states = {a.agent_id: a.state for a in reader.session_agents(transcript, NOW)[0]}
+    assert states == {"a1": "asleep", "a2": "running", "a3": "asleep"}                   # 4 min quiet
+    later = NOW + timedelta(minutes=12)                                                  # 16 min after iso(1)
+    assert {a.state for a in reader.session_agents(transcript, later)[0]} == {"asleep"}
+    _append(answered, assistant_msg("m4", iso(2), content=[{"type": "thinking", "thinking": "."}]))
+    assert _by_id(reader.session_agents(transcript, NOW)[0])["a1"].state == "running"    # streaming again
+
+
+def test_long_transcripts_are_read_in_bounded_steps(tmp_path, monkeypatch):
+    """A step smaller than one record still folds every record once, the
+    lead's open calls included."""
+    monkeypatch.setattr(agents_module, "READ_BYTES", 7)
+    transcript = write_jsonl(tmp_path / "projects" / "-x" / "s1.jsonl", [
+        user_msg("go", iso(0)), assistant_msg("lead", iso(0), content=[tool("Agent", tid="toolu_a1", description="d")])])
+    folder = transcript.with_suffix("") / "subagents"
+    _agent(folder, "a1", [assistant_msg("m1", iso(1), content=[tool("Grep", pattern="p")], stop_reason="tool_use"),
+                          tool_result_msg("hit", iso(2)), user_msg(INTERRUPTED, iso(2)),
+                          assistant_msg("m2", iso(3), content=[tool("Read", tid="t2", file_path="/a")])])
+    reader = AgentReader(tmp_path)
+    a = _by_id(reader.session_agents(transcript, NOW)[0])["a1"]
+    assert a.tool_mix == {"Grep": 1, "Read": 1} and a.started == iso(1) and a.last == iso(3)
+    session = reader._sessions[transcript.resolve().with_suffix("")]
+    assert session.lead.open == {"toolu_a1"} and session.lead.size == transcript.stat().st_size
+
+
+def test_a_foreground_agent_works_while_its_parent_waits_on_it(tmp_path):
+    """No record while the model composes a long reply: the lead's open
+    Agent call says the agent is still at work, for up to TOOL_PATIENCE."""
+    transcript = write_jsonl(tmp_path / "projects" / "-x" / "s1.jsonl", [
+        user_msg("go", iso(0)), assistant_msg("lead", iso(0), content=[tool("Agent", tid="toolu_a1", description="d")])])
+    folder = transcript.with_suffix("") / "subagents"
+    _agent(folder, "a1", [user_msg("look", iso(0)), assistant_msg("m1", iso(1), content=[tool("Grep", pattern="p")]),
+                          tool_result_msg("hit", iso(2)), user_msg(INTERRUPTED, iso(2))])
+    _agent(folder, "a2", [assistant_msg("m2", iso(2), content=[{"type": "text", "text": "Thinking aloud."}])],
+           toolUseId="toolu_a2")
+    _append(transcript, assistant_msg("lead2", iso(0), content=[tool("Agent", tid="toolu_a2", description="e")]))
+    reader = AgentReader(tmp_path)
+    agents = _by_id(reader.session_agents(transcript, NOW)[0])
+    assert agents["a1"].state == "running"                       # 3 min quiet, its lead still waits
+    assert agents["a2"].state == "running"                       # a text block mid-run is not the end
+    later = NOW + timedelta(minutes=13)                          # 16 min after iso(2)
+    assert _by_id(reader.session_agents(transcript, later)[0])["a1"].state == "asleep"
+    _append(transcript, tool_result_msg("interrupted", iso(3), tool_use_id="toolu_a1"),
+            tool_result_msg("done", iso(3), tool_use_id="toolu_a2"))
+    agents = _by_id(reader.session_agents(transcript, NOW)[0])
+    assert agents["a1"].state == "asleep" and agents["a2"].state == "done"   # the lead has its results
 
 
 def test_thinking_only_keeps_the_last_doing_and_targets_are_trimmed(tmp_path):

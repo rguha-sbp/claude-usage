@@ -21,7 +21,7 @@ var data = { generated_at: '2026-10-14T10:00:00Z', rooms: [{ project: 'usage', c
   { session_id: 's1', title: 'office <v4>', model: 'Opus 5', state: 'working', since: '2026-10-14T09:48:00Z',
     doing: { tool: 'Bash', target: 'uv run pytest -q' }, agents_hidden: 3, agents: [
       sub('a', null, 'running', { type: 'T<b>"&', description: 'D<b>"&', doing: { tool: 'Grep', target: 'X<b>"&' }, tool_mix: { 'M<b>"&': 2 } }), sub('b', 'a', 'running', { background: true }), sub('c', null, 'done'),
-      sub('orphan', 'gone-parent', 'stalled')] },
+      sub('orphan', 'gone-parent', 'asleep')] },
   { session_id: 's2', title: 'quiet one', model: '', state: 'asleep', since: '2026-10-14T09:00:00Z',
     doing: null, agents_hidden: 0, agents: [] }] }] };
 
@@ -37,7 +37,7 @@ expect(html.indexOf('office &lt;v4&gt;') !== -1 && html.indexOf('<v4>') === -1, 
 expect(html.indexOf('T&lt;b&gt;&quot;&amp;') !== -1 && html.indexOf('X&lt;b&gt;&quot;&amp;') !== -1, 'escaped forms are present');
 expect((html.match(/class="rail-session"/g) || []).length === 2, 'one block per live session');
 expect(html.indexOf('data-agent="s1/b"') !== -1 && html.indexOf('--depth:2') !== -1, 'nested rows indent');
-expect(html.indexOf('state-done') !== -1 && html.indexOf('state-stalled') !== -1, 'done and stalled rows are marked');
+expect(html.indexOf('state-done') !== -1 && html.indexOf('state-asleep') !== -1, 'done and asleep rows are marked');
 expect(html.indexOf('Bash: uv run pytest -q') !== -1 && html.indexOf('Grep: subagent') !== -1, 'leads and interns show what they do');
 expect(html.indexOf('38.2K tok') !== -1 && html.indexOf('14 tools') !== -1, 'tokens and tool counts');
 var one = R.metaLine(sub('solo', null, 'running', { tools: 1 }), T0);

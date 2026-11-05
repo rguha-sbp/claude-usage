@@ -7,7 +7,7 @@ all other hook events untouched), never sets `autoCompactWindow` (the tool
 alerts, it does not act; a value of 200000 left behind by an earlier installer
 is removed, anything else the user set is kept), and raises `cleanupPeriodDays`
 to at least 90 without lowering it. `main` wraps that with
-a CLI: back up an existing file before writing, create the file (and parent
+a CLI that takes the absolute interpreter path: back up an existing file before writing, create the file (and parent
 dirs) if it is missing, and refuse to touch anything if the existing file is
 not valid JSON.
 """
@@ -20,7 +20,8 @@ import pytest
 from usage.install_settings import CLEANUP_DAYS, LEGACY_AUTO_COMPACT_WINDOW, main, merge_settings
 
 REPO = "/repo"
-STATUSLINE_COMMAND = "python3 /repo/statusline/statusline.py"
+PYTHON = "/py/bin/python3.15"
+STATUSLINE_COMMAND = "/py/bin/python3.15 /repo/statusline/statusline.py"
 HOOK_COMMAND = "/repo/hooks/precompact-notify.sh"
 EXPECTED_PRECOMPACT_ENTRY = {
     "matcher": "auto",
@@ -34,7 +35,7 @@ def test_merge_sets_expected_keys_and_preserves_others():
         "cleanupPeriodDays": 30,
         "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "x"}]}]},
     }
-    out = merge_settings(data, REPO)
+    out = merge_settings(data, REPO, PYTHON)
 
     assert out["model"] == "fable"
     assert out["statusLine"] == {"type": "command", "command": STATUSLINE_COMMAND, "padding": 0}
@@ -48,22 +49,22 @@ def test_merge_sets_expected_keys_and_preserves_others():
 
 
 def test_merge_is_idempotent():
-    once = merge_settings({"cleanupPeriodDays": 365}, REPO)
-    twice = merge_settings(json.loads(json.dumps(once)), REPO)
+    once = merge_settings({"cleanupPeriodDays": 365}, REPO, PYTHON)
+    twice = merge_settings(json.loads(json.dumps(once)), REPO, PYTHON)
     assert once == twice
     assert len(twice["hooks"]["PreCompact"]) == 1
     assert twice["cleanupPeriodDays"] == 365
 
 
 def test_merge_removes_the_auto_compact_window_an_earlier_installer_wrote():
-    out = merge_settings({"autoCompactWindow": LEGACY_AUTO_COMPACT_WINDOW, "theme": "dark"}, REPO)
+    out = merge_settings({"autoCompactWindow": LEGACY_AUTO_COMPACT_WINDOW, "theme": "dark"}, REPO, PYTHON)
     assert LEGACY_AUTO_COMPACT_WINDOW == 200000
     assert "autoCompactWindow" not in out
     assert out["theme"] == "dark"
 
 
 def test_merge_keeps_a_user_chosen_auto_compact_window():
-    out = merge_settings({"autoCompactWindow": 300000}, REPO)
+    out = merge_settings({"autoCompactWindow": 300000}, REPO, PYTHON)
     assert out["autoCompactWindow"] == 300000
 
 
@@ -77,7 +78,7 @@ def test_merge_replaces_old_precompact_entry_preserves_unrelated_entries_and_eve
             "Stop": [{"hooks": [{"type": "command", "command": "stop-hook.sh"}]}],
         }
     }
-    out = merge_settings(data, REPO)
+    out = merge_settings(data, REPO, PYTHON)
     pre = out["hooks"]["PreCompact"]
 
     assert len(pre) == 2
@@ -100,7 +101,7 @@ def test_merge_preserves_full_user_settings_snapshot():
         "tui": "fullscreen",
         "theme": "dark",
     }
-    out = merge_settings(data, REPO)
+    out = merge_settings(data, REPO, PYTHON)
     for key, value in data.items():
         assert out[key] == value
     assert "autoCompactWindow" not in out
@@ -125,7 +126,7 @@ def test_merge_preserves_full_user_settings_snapshot():
 )
 def test_cleanup_period_days_is_max_of_existing_and_90(existing, expected):
     data = {} if existing is None else {"cleanupPeriodDays": existing}
-    out = merge_settings(data, REPO)
+    out = merge_settings(data, REPO, PYTHON)
     assert out["cleanupPeriodDays"] == expected
 
 
@@ -133,7 +134,7 @@ def test_main_creates_missing_file_and_parent_dirs(tmp_path):
     target = tmp_path / "nested" / "settings.json"
     assert not target.parent.exists()
 
-    rc = main([str(target), REPO])
+    rc = main([str(target), REPO, PYTHON])
 
     assert rc == 0
     written = json.loads(target.read_text())
@@ -151,7 +152,7 @@ def test_main_backs_up_existing_file_before_writing(tmp_path):
     settings.write_text(json.dumps(original))
 
     before = time.strftime("%Y%m%d")
-    rc = main([str(settings), REPO])
+    rc = main([str(settings), REPO, PYTHON])
     assert rc == 0
 
     written = json.loads(settings.read_text())
@@ -170,7 +171,7 @@ def test_main_malformed_json_exits_1_and_does_not_write(tmp_path):
     settings = tmp_path / "settings.json"
     settings.write_text("{not valid json")
 
-    rc = main([str(settings), REPO])
+    rc = main([str(settings), REPO, PYTHON])
 
     assert rc == 1
     # untouched
@@ -182,7 +183,7 @@ def test_main_prints_summary_with_keys_and_backup_path(tmp_path, capsys):
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({"theme": "dark"}))
 
-    main([str(settings), REPO])
+    main([str(settings), REPO, PYTHON])
     out = capsys.readouterr().out
 
     assert "statusLine" in out
@@ -194,4 +195,33 @@ def test_main_prints_summary_with_keys_and_backup_path(tmp_path, capsys):
 
 def test_main_returns_0_on_success(tmp_path):
     settings = tmp_path / "settings.json"
-    assert main([str(settings), REPO]) == 0
+    assert main([str(settings), REPO, PYTHON]) == 0
+
+
+def test_a_repo_path_with_spaces_or_shell_characters_is_quoted_and_still_recognised():
+    repo = "/Users/x/my repo;$(id)"
+    merged = merge_settings({}, repo, PYTHON)
+    assert merged["statusLine"]["command"] == "/py/bin/python3.15 '/Users/x/my repo;$(id)/statusline/statusline.py'"
+    [entry] = merged["hooks"]["PreCompact"]
+    assert entry["hooks"][0]["command"] == "'/Users/x/my repo;$(id)/hooks/precompact-notify.sh'"
+    again = merge_settings(merged, repo, PYTHON)
+    assert len(again["hooks"]["PreCompact"]) == 1          # the quoted entry is replaced, not duplicated
+
+
+def test_an_interpreter_path_with_spaces_or_shell_characters_is_quoted():
+    python = "/Users/x/my pythons;$(id)/bin/python3.15"
+    command = merge_settings({}, REPO, python)["statusLine"]["command"]
+    assert command == "'/Users/x/my pythons;$(id)/bin/python3.15' /repo/statusline/statusline.py"
+
+
+def test_merge_replaces_an_old_python3_statusline_entry():
+    old = {"statusLine": {"type": "command", "command": "python3 /repo/statusline/statusline.py", "padding": 0}}
+    out = merge_settings(old, REPO, PYTHON)
+    assert out["statusLine"] == {"type": "command", "command": STATUSLINE_COMMAND, "padding": 0}
+
+
+@pytest.mark.parametrize("argv", [["settings.json", REPO], ["settings.json", REPO, "python3"]])
+def test_main_rejects_a_missing_or_relative_interpreter(tmp_path, argv):
+    argv = [str(tmp_path / argv[0])] + argv[1:]
+    assert main(argv) == 2
+    assert not (tmp_path / "settings.json").exists()

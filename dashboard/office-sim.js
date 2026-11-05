@@ -14,38 +14,41 @@
    corridor in front of the rooms (constant x + y).
 
    Interns (spec Sec 13.4) are agents too, keyed `session/agent_id`: Standing,
-   Stalled and HandingBack sit beside the worker states and reuse Walk,
-   Leaving and Gone. A lead with a running sub-agent reads as working, so it
-   never wanders off while its team works. */
+   Napping and HandingBack sit beside the worker states and reuse Walk,
+   Leaving and Gone. Whether a lead works is the server's call alone (it
+   counts a lead blocked on a foreground sub-agent as working). */
 window.OfficeSim = (function () {
   'use strict';
 
   var SPEED = 1.7;          // tiles per second, before the model's own multiplier
   var MAX_FORCE = 7;        // tiles per second squared
+  var GRIP = 8;             // per second: how quickly a walker matches the velocity it wants
   var SLOW_RADIUS = 0.5;    // start braking this close to a waypoint
   var ARRIVE = 0.05;        // "there" when this close
   var WALK_TIMEOUT = 14;    // seconds: a stuck walker snaps to its target
   var CHAT_RANGE = 2.5;     // tiles: how far apart two loungers still talk
+  var BREAK_CHANCE = 0.3;   // a working lead between thoughts steps away this often
 
   // ------------------------------------------------------------ helpers
-  var hash = window.OfficeCast.hash;          // office-cast.js loads first
-  function rng(seed) {                        // mulberry32: same session, same habits
-    var t = seed >>> 0;
-    return function () {
-      t = (t + 0x6D2B79F5) >>> 0;
-      var r = Math.imul(t ^ (t >>> 15), 1 | t);
-      r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
-      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-    };
-  }
+  var hash = window.OfficeCast.hash, rng = window.OfficeCast.rng;   // office-cast.js loads first
   function between(r, a, b) { return a + r() * (b - a); }
   function copy(p) { return { x: p.x, y: p.y }; }
+  /* Structural equality of plain place data: numbers, spots, lists. */
+  function same(p, q) {
+    if (p === q) return true;
+    if (!p || !q || typeof p !== 'object' || typeof q !== 'object') return false;
+    var keys = Object.keys(p);
+    return keys.length === Object.keys(q).length && keys.every(function (k) { return same(p[k], q[k]); });
+  }
+  function spotKey(p) { return p.x.toFixed(2) + ',' + p.y.toFixed(2); }
   function tierOf(model) {
     return (window.OfficeCast && window.OfficeCast.tierOf(model)) || { key: 'core', speed: 1 };
   }
 
   // ------------------------------------------------------------- STEER
   /* Arrive: accelerate toward `target`, ramp speed down inside SLOW_RADIUS.
+     GRIP keeps a walker on its walkway: without it a turn at a corner
+     drifts a tile wide, through whatever furniture stands there.
      Returns true once the agent is there. */
   function arrive(agent, target, dt) {
     var top = SPEED * (agent.speed || 1);
@@ -53,11 +56,11 @@ window.OfficeSim = (function () {
     var dist = Math.hypot(dx, dy);
     var fx, fy;
     if (dist < 0.001) {
-      fx = -agent.vel.x; fy = -agent.vel.y;
+      fx = -agent.vel.x * GRIP; fy = -agent.vel.y * GRIP;
     } else {
       var ramped = top * Math.min(dist / SLOW_RADIUS, 1);
-      fx = dx / dist * ramped - agent.vel.x;
-      fy = dy / dist * ramped - agent.vel.y;
+      fx = (dx / dist * ramped - agent.vel.x) * GRIP;
+      fy = (dy / dist * ramped - agent.vel.y) * GRIP;
     }
     var f = Math.hypot(fx, fy);
     if (f > MAX_FORCE) { fx *= MAX_FORCE / f; fy *= MAX_FORCE / f; }
@@ -97,11 +100,70 @@ window.OfficeSim = (function () {
     return new Walk(back.concat([copy(seat)]), seat, then, { home: true });
   }
 
+  /* The way out from wherever the worker is (spec Sec 15.2): a session can
+     end at the canteen, at another row's cooler or halfway along a walk,
+     and the door's `via` starts at the worker's own aisle. So walk the
+     route it is on, back or ahead, to the nearest point of its own way out
+     (seat, aisle, the door's `via`, the door), and follow that to the door.
+     Every leg is one the floor already keeps clear for the trips out and
+     back; `straighten` then folds the out-and-back stretches, so nobody
+     walks to the spine just to turn round in the corridor. */
+  function walkOut(a, then) {
+    var seat = a.places.seat, door = a.places.door;
+    var way = [copy(seat), laneAt(seat.lane, seat)].concat(door.via || [], [copy(door)]);
+    var best = [joinWay(a.route.slice(0, a.wp).reverse(), way, a.pos), joinWay(a.route.slice(a.wp), way, a.pos)]
+      .filter(Boolean).sort(function (p, q) { return p.length - q.length; })[0];
+    var points = best ? best.legs.concat(way.slice(best.at + 1)) : way;
+    return new Walk(straighten([copy(a.pos)].concat(points)), door, then, { leaving: true });
+  }
+
+  /* Along `chain` from `pos` to its first point on `way`, or null. */
+  function joinWay(chain, way, pos) {
+    var length = 0, last = pos;
+    for (var i = 0; i < chain.length; i++) {
+      length += Math.hypot(chain[i].x - last.x, chain[i].y - last.y);
+      last = chain[i];
+      for (var j = 0; j < way.length; j++) {
+        if (Math.hypot(way[j].x - last.x, way[j].y - last.y) < 1e-6) return { legs: chain.slice(0, i + 1), at: j, length: length };
+      }
+    }
+    return null;
+  }
+
+  /* Drop every waypoint that lies on the line through its neighbours. The
+     walk from the first to the last of three such points never leaves the
+     two legs it replaces. */
+  function straighten(points) {
+    var out = [];
+    points.forEach(function (q) {
+      while (out.length >= 2) {
+        var a = out[out.length - 2], b = out[out.length - 1];
+        if (Math.abs((b.x - a.x) * (q.y - b.y) - (b.y - a.y) * (q.x - b.x)) > 1e-6) break;
+        out.pop();
+      }
+      out.push(q);
+    });
+    return out;
+  }
+
   // ------------------------------------------------------------ DECIDE
   /* Each state: enter(agent, sim), update(agent, sim, dt) -> next state or
      null, optional exit(agent, sim). `pose` is what office.js draws. */
 
   function leaveIfGone(a) { return a.server === 'gone' ? new Leaving() : null; }
+
+  /* An errand is work time spent away from the desk, so it ends the moment
+     the session stops working: a gone session walks out, a sleeper walks
+     home and dozes. */
+  function errand(a, spot, then) { return walkTo(a, spot, then, { errand: true }); }
+  function atDesk(a) { return a.server === 'working' ? new Typing() : new Dozing(); }
+  function backToDesk(a, sim) {
+    return goHome(a, sim, function () { return atDesk(a); });
+  }
+  function errandOver(a, sim) {
+    if (a.server === 'working') return null;
+    return leaveIfGone(a) || backToDesk(a, sim);
+  }
 
   function Typing() {}
   Typing.prototype.pose = 'typing';
@@ -118,38 +180,38 @@ window.OfficeSim = (function () {
   Thinking.prototype.update = function (a, sim, dt) {
     if (a.server !== 'working') return leaveIfGone(a) || new Dozing();
     a.timer -= dt;
-    return a.timer <= 0 ? new Typing() : null;
+    if (a.timer > 0) return null;
+    return sim.wander && a.rng() < BREAK_CHANCE ? takeBreak(a, sim) : new Typing();
   };
 
+  /* A sleeper stays at its desk until its session works again or ends. */
   function Dozing() {}
   Dozing.prototype.pose = 'dozing';
-  Dozing.prototype.enter = function (a, sim) {
-    // the first nap is short so a fresh page comes alive; later ones are longer
-    a.timer = sim.wander ? (a.errands ? between(a.rng, 45, 120) : between(a.rng, 12, 35)) : Infinity;
-  };
-  Dozing.prototype.update = function (a, sim, dt) {
-    if (a.server === 'working') return new Typing();
-    if (a.server === 'gone') return new Leaving();
-    a.timer -= dt;
-    if (a.timer > 0) return null;
-    a.errands += 1;
-    // Coffee is contagious: a worker is far likelier to head for the canteen
-    // when somebody is already standing there. Otherwise it is a toss-up
-    // between the canteen, a chat in the aisle and the water cooler.
+  Dozing.prototype.enter = function () {};
+  Dozing.prototype.update = function (a) { return a.server === 'working' ? new Typing() : leaveIfGone(a); };
+
+  /* Coffee is contagious: a worker is far likelier to head for the canteen
+     when somebody is already standing there. Otherwise it is a toss-up
+     between the canteen, a chat in the aisle and the water cooler. */
+  function takeBreak(a, sim) {
     if (a.rng() < (sim.anyLounger(a) ? 0.85 : 0.5)) {
-      var table = sim.freeSpot(a, a.places.canteen, 'canteen');
-      if (table) return walkTo(a, table, function () { return new Lounging(); });
+      var table = sim.freeSpot(a, a.places.canteen);
+      if (table) return errand(a, table, function () { return new Lounging(); });
     }
     var partner = sim.partnerFor(a);
-    if (partner && a.rng() < 0.6) {
-      sim.transition(partner, walkTo(partner, partner.places.meet2, function () { return new Chatting(a); }));
-      return walkTo(a, a.places.meet, function () { return new Chatting(partner); });
+    if (partner && a.rng() < 0.6 && sim.freeSpot(a, [a.places.meet])) {
+      if (sim.freeSpot(partner, [partner.places.meet2])) {
+        sim.transition(partner, errand(partner, partner.places.meet2, function () { return new Chatting(a); }));
+        return errand(a, a.places.meet, function () { return new Chatting(partner); });
+      }
+      sim.release(a);
     }
-    return walkTo(a, a.places.stand || a.places.cooler, function () { return new Drinking(); });
-  };
+    var stand = sim.freeSpot(a, [a.places.stand]);
+    return stand ? errand(a, stand, function () { return new Drinking(); }) : new Typing();
+  }
 
-  /* Walk the `points`, then become whatever `then()` returns. A worker
-     called back to work heads home first; a gone session walks out. */
+  /* Walk the `points`, then become whatever `then()` returns. A gone
+     session walks out; an errand ends early once the session stops working. */
   function Walk(points, target, then, opts) {
     this.points = points;
     this.target = target;
@@ -166,7 +228,7 @@ window.OfficeSim = (function () {
   Walk.prototype.update = function (a, sim, dt) {
     if (!this.opts.leaving) {
       if (a.server === 'gone') return new Leaving();
-      if (a.server === 'working' && !this.opts.home) return goHome(a, sim, function () { return new Typing(); });
+      if (this.opts.errand) { var over = errandOver(a, sim); if (over) return over; }
     }
     a.walked += dt;
     if (a.walked > WALK_TIMEOUT) a.wp = a.route.length;         // stuck check: snap and move on
@@ -182,10 +244,8 @@ window.OfficeSim = (function () {
   Drinking.prototype.pose = 'drinking';
   Drinking.prototype.enter = function (a) { a.timer = between(a.rng, 3.5, 6); a.facing = 1; };   // the cooler is to the right
   Drinking.prototype.update = function (a, sim, dt) {
-    if (a.server === 'gone') return new Leaving();
-    if (a.server === 'working') return goHome(a, sim, function () { return new Typing(); });
     a.timer -= dt;
-    return a.timer <= 0 ? goHome(a, sim, function () { return new Dozing(); }) : null;
+    return errandOver(a, sim) || (a.timer <= 0 ? backToDesk(a, sim) : null);
   };
 
   /* The canteen out on the plaza: the one place where workers from
@@ -198,8 +258,8 @@ window.OfficeSim = (function () {
     a.extended = false;
   };
   Lounging.prototype.update = function (a, sim, dt) {
-    if (a.server === 'gone') return new Leaving();
-    if (a.server === 'working') return goHome(a, sim, function () { return new Typing(); });
+    var over = errandOver(a, sim);
+    if (over) return over;
     var mate = sim.loungerNear(a);
     if (mate) {
       if (!a.extended) { a.extended = true; a.timer += 12; }   // nobody cuts a conversation short
@@ -210,7 +270,7 @@ window.OfficeSim = (function () {
       a.bubble = false;
     }
     a.timer -= dt;
-    return a.timer <= 0 ? goHome(a, sim, function () { return new Dozing(); }) : null;
+    return a.timer <= 0 ? backToDesk(a, sim) : null;
   };
   Lounging.prototype.exit = function (a) { a.bubble = false; };
 
@@ -222,14 +282,14 @@ window.OfficeSim = (function () {
     a.facing = (a.pos.x - a.pos.y) < (this.partner.pos.x - this.partner.pos.y) ? 1 : -1;
   };
   Chatting.prototype.update = function (a, sim, dt) {
-    if (a.server === 'gone') return new Leaving();
-    if (a.server === 'working') return goHome(a, sim, function () { return new Typing(); });
+    var over = errandOver(a, sim);
+    if (over) return over;
     var other = this.partner.state;
     var partnerHere = other && (other.pose === 'chatting' || (other.pose === 'walking' && !other.opts.home));
     a.timer -= dt;
     a.bubbleAt = (a.bubbleAt + dt) % 4;
     a.bubble = a.bubbleAt < 2;
-    if (a.timer <= 0 || !partnerHere) { a.bubble = false; return goHome(a, sim, function () { return new Dozing(); }); }
+    if (a.timer <= 0 || !partnerHere) { a.bubble = false; return backToDesk(a, sim); }
     return null;
   };
   Chatting.prototype.exit = function (a) { a.bubble = false; };
@@ -239,7 +299,7 @@ window.OfficeSim = (function () {
   Leaving.prototype.enter = function (a, sim) {
     a.leaving = true;
     sim.release(a);
-    sim.transition(a, walkTo(a, a.places.door, function () { return new Gone(); }, { leaving: true }));
+    sim.transition(a, walkOut(a, function () { return new Gone(); }));
   };
   Leaving.prototype.update = function () { return null; };
 
@@ -251,18 +311,21 @@ window.OfficeSim = (function () {
   // ----------------------------------------------------------- interns
   /* A sub-agent is an intern (spec Sec 13.4). It walks in from the doorway
      to a standing slot by its lead's desk, works there while its agent
-     runs, walks to the lead's desk to hand back once the agent is done, and
-     walks out. For an intern `a.server` is the agent's state -- running,
-     stalled, done -- or gone once the payload stops listing it. */
+     runs, dozes there while its agent is asleep, walks to the lead's desk to
+     hand back once the agent is done, and walks out. For an intern
+     `a.server` is the agent's state -- running, asleep, done -- or gone once
+     the payload stops listing it. */
   function internNext(a, sim, here) {
     var gone = leaveIfGone(a);
     if (gone) return gone;
     if (a.server === 'done') {
-      return sim.wander ? walkTo(a, a.places.handoff, function () { return new HandingBack(); }) : new Gone();
+      if (!sim.wander) return new Gone();
+      var desk = sim.freeSpot(a, [a.places.handoff]);     // one intern hands back at a time
+      return desk ? walkTo(a, desk, function () { return new HandingBack(); }) : null;
     }
-    var want = a.server === 'stalled' ? 'stalled' : 'standing';
+    var want = a.server === 'asleep' ? 'dozing' : 'standing';
     if (want === here) return null;
-    return want === 'stalled' ? new Stalled() : new Standing();
+    return want === 'dozing' ? new Napping() : new Standing();
   }
 
   function Standing() {}
@@ -270,10 +333,10 @@ window.OfficeSim = (function () {
   Standing.prototype.enter = function () {};
   Standing.prototype.update = function (a, sim) { return internNext(a, sim, 'standing'); };
 
-  function Stalled() {}
-  Stalled.prototype.pose = 'stalled';
-  Stalled.prototype.enter = function () {};
-  Stalled.prototype.update = function (a, sim) { return internNext(a, sim, 'stalled'); };
+  function Napping() {}
+  Napping.prototype.pose = 'dozing';
+  Napping.prototype.enter = function () {};
+  Napping.prototype.update = function (a, sim) { return internNext(a, sim, 'dozing'); };
 
   function HandingBack() {}
   HandingBack.prototype.pose = 'handing';
@@ -293,29 +356,41 @@ window.OfficeSim = (function () {
   }
 
   // --------------------------------------------------------------- Sim
-  var AWAY = { walking: 1, drinking: 1, chatting: 1, lounging: 1 };
-
   /* A fresh agent standing at `pos`: habits and looks follow from its id. */
   function newAgent(id, pos, lane) {
     var h = hash(id);
     return { id: id, rng: rng(h), pos: copy(pos), vel: { x: 0, y: 0 }, facing: 1,
-             bubble: false, errands: 0, popped: false, done: false, leaving: false, state: null,
-             route: [], wp: 0, held: null, lane: lane, kind: 'lead',
+             bubble: false, popped: false, done: false, leaving: false, state: null,
+             route: [], wp: 0, held: null, lane: lane, kind: 'lead', queued: 0,
              look: { hair: h % 5, glasses: ((h >>> 3) % 3) === 0, coat: ((h >>> 5) % 4) === 0 } };
   }
 
-  /* A seated or standing agent follows its spot when the room is re-laid out. */
-  function relocate(a, seat) {
-    if (!AWAY[a.state.pose] && (a.places.seat.x !== seat.x || a.places.seat.y !== seat.y)) {
-      a.pos = copy(seat);
-      a.lane = seat.lane;
-    }
+  /* Hand an agent its places; when the floor was re-laid out under it (a
+     session joined or left), restart it at its new seat. Whatever it was
+     doing -- sitting, on an errand, walking in, out or home -- its position,
+     route and target belong to the old floor, and from a point of the old
+     floor no walk on the new one is known to be clear. The new seat is,
+     and every walk the agent then plans starts from there. */
+  function relocate(sim, a, places) {
+    var moved = !same(a.places, places);
+    a.places = places;
+    if (!moved) return;
+    sim.release(a);
+    a.pos = copy(places.seat);
+    a.lane = places.seat.lane;
+    a.vel = { x: 0, y: 0 };
+    a.route = [];
+    a.wp = 0;
+    var popped = a.popped;                 // a re-layout is not a moment to squash for
+    sim.transition(a, a.leaving ? new Leaving() : a.kind === 'intern' ? new Standing() : atDesk(a));
+    a.popped = popped;
   }
 
   function Sim(opts) {
     this.agents = {};
     this.primed = false;                   // true once the first sync has finished
-    this.spots = {};                       // "canteen3" -> session id holding it
+    this.floor = null;                     // the places of the last sync: a new object means a new floor
+    this.spots = {};                       // spotKey -> id of the agent holding that spot
     this.wander = !(opts && opts.wander === false);
   }
 
@@ -327,20 +402,22 @@ window.OfficeSim = (function () {
   };
 
   /* Server payload in, agents updated: new sessions get an agent at their
-     seat, missing ones are told they are gone, and a seated agent whose
-     desk moved (rooms re-laid out) is moved with it. A lead with a running
-     sub-agent counts as working -- it is waiting on its team, not idle --
-     and each sub-agent gets an intern (syncInterns). */
+     seat, missing ones are told they are gone, an agent whose places moved
+     (rooms re-laid out) restarts at its new seat (relocate), and each
+     sub-agent gets an intern (syncInterns). `placesById` is the floor
+     plan's own `places`: the same object means the same floor, so places
+     are compared only after a re-layout. */
   Sim.prototype.sync = function (workers, placesById) {
     var seen = {};
     var self = this;
+    var relaid = placesById !== this.floor;   // office.js rebuilds the plan only when the floor changes
+    this.floor = placesById;
     workers.forEach(function (w) {
       var places = placesById[w.session_id];
       if (!places) return;
       seen[w.session_id] = true;
       var tier = tierOf(w.model);
-      var busy = (w.agents || []).some(function (sub) { return sub.state === 'running'; });
-      var server = w.state === 'asleep' && busy ? 'working' : w.state;
+      var server = w.state;
       var a = self.agents[w.session_id];
       if (!a) {
         a = newAgent(w.session_id, places.seat, places.seat.lane);
@@ -349,16 +426,15 @@ window.OfficeSim = (function () {
         a.places = places;
         a.tier = tier.key;
         a.speed = tier.speed;
-        self.transition(a, server === 'working' ? new Typing() : new Dozing());
+        self.transition(a, atDesk(a));
         a.popped = false;
       } else {
-        relocate(a, places.seat);
-        a.places = places;
         a.server = server;
         a.tier = tier.key;
         a.speed = tier.speed;
+        if (relaid) relocate(self, a, places);
       }
-      self.syncInterns(w, places, seen);
+      a.queued = self.syncInterns(w, places, seen, relaid);
     });
     Object.keys(this.agents).forEach(function (id) {
       if (!seen[id]) self.agents[id].server = 'gone';
@@ -368,34 +444,40 @@ window.OfficeSim = (function () {
 
   /* One intern per listed sub-agent that is not done, while the pod has a
      free slot; one already on stage follows its agent's state. A sub-agent
-     that finished before we ever saw it only shows in the rail. */
-  Sim.prototype.syncInterns = function (w, places, seen) {
+     that finished before we ever saw it only shows in the rail. Returns how
+     many sub-agents wait for a slot: the sim alone knows which have none,
+     as a done intern can hold its slot for a while (freeSlot). */
+  Sim.prototype.syncInterns = function (w, places, seen, relaid) {
     var self = this;
+    var queued = 0;
     (w.agents || []).forEach(function (sub) {
       var id = w.session_id + '/' + sub.agent_id;
       var a = self.agents[id];
       if (!a) {
         if (sub.state === 'done') return;
         var slot = self.freeSlot(w.session_id, places);
-        if (slot < 0) return;                       // the pod is full: the name plate counts it
+        if (slot < 0) { queued += 1; return; }      // the pod is full: the name plate counts it
         a = self.spawnIntern(id, w.session_id, sub, places, slot);
       }
       seen[id] = true;
-      var p = internPlaces(places, a.slot);
-      relocate(a, p.seat);
-      a.places = p;
       a.server = sub.state;
+      if (relaid) relocate(self, a, internPlaces(places, a.slot));
       a.background = !!sub.background;
       a.parentId = sub.parent ? w.session_id + '/' + sub.parent : w.session_id;
     });
+    return queued;
   };
 
+  /* A slot stays taken until its intern walks away from it: to the
+     hand-off spot it then holds, or out. A done intern whose hand-off spot
+     is busy still stands in its slot, so its agent's state cannot say. */
   Sim.prototype.freeSlot = function (lead, places) {
     var taken = {};
     var self = this;
     Object.keys(this.agents).forEach(function (id) {
       var b = self.agents[id];
-      if (b.lead === lead && b.server !== 'done' && b.server !== 'gone') taken[b.slot] = true;
+      if (b.lead !== lead || b.leaving || b.held === spotKey(b.places.handoff)) return;
+      taken[b.slot] = true;
     });
     for (var s = 0; s < places.pod.length; s++) if (!taken[s]) return s;
     return -1;
@@ -404,7 +486,7 @@ window.OfficeSim = (function () {
   /* Interns on stage at the first sync start in their slot; later ones walk
      in from the doorway (or appear there under reduced motion). */
   Sim.prototype.spawnIntern = function (id, leadId, sub, places, slot) {
-    var tier = tierOf(sub.model);
+    var tier = window.OfficeCast.internTierOf(sub.model);
     var p = internPlaces(places, slot);
     var walkIn = this.primed && this.wander;
     var a = newAgent(id, walkIn ? places.door : p.seat, walkIn ? places.door.lane : p.seat.lane);
@@ -432,9 +514,11 @@ window.OfficeSim = (function () {
     return null;
   };
 
-  /* Another sleeper in the same room who is free to be talked to. */
+  /* Another worker at its desk in the same room, free to be talked to. */
   Sim.prototype.partnerFor = function (a) {
-    return this.leadWhere(a, function (b) { return b.places.room === a.places.room && b.state.pose === 'dozing' && b.server === 'asleep'; });
+    return this.leadWhere(a, function (b) {
+      return b.places.room === a.places.room && b.server === 'working' && (b.state.pose === 'typing' || b.state.pose === 'thinking');
+    });
   };
 
   /* Anyone else standing around the canteen, whatever project they came from. */
@@ -444,18 +528,25 @@ window.OfficeSim = (function () {
 
   /* Is anyone already at the canteen, or on their way there? */
   Sim.prototype.anyLounger = function (a) {
-    return this.leadWhere(a, function (b) { return b.state.pose === 'lounging' || (b.held && b.state.pose === 'walking'); });
+    return this.leadWhere(a, function (b) {
+      return b.state.pose === 'lounging' || (b.state.pose === 'walking' && b.places.canteen.indexOf(b.state.target) !== -1);
+    });
   };
 
-  /* Standing room is first come, first served, so two workers never share
-     a spot. The holder gives it back when it walks away (goHome/Leaving). */
-  Sim.prototype.freeSpot = function (a, list, key) {
-    if (!list || !list.length) return null;
+  /* Every shared spot (a canteen table, the cooler stand, the two meeting
+     spots, a desk's hand-off spot) is first come, first served, so two
+     agents never stand inside each other. The first spot of `list` that
+     nobody else holds becomes `a`'s, or null. An agent holds one spot at a
+     time and gives it back when it walks away (goHome, Leaving, relocate).
+     Spots are told apart by where they are: each worker's places are its
+     own objects, but the cooler stand of a room is one point for all. */
+  Sim.prototype.freeSpot = function (a, list) {
     for (var i = 0; i < list.length; i++) {
-      var holder = this.spots[key + i];
+      var key = spotKey(list[i]), holder = this.spots[key];
       if (!holder || holder === a.id) {
-        this.spots[key + i] = a.id;
-        a.held = key + i;
+        if (a.held !== key) this.release(a);
+        this.spots[key] = a.id;
+        a.held = key;
         return list[i];
       }
     }

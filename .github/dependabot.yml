@@ -1,0 +1,16 @@
+# npm covers three.js, vendored in dashboard/vendor/three (see package.json);
+# uv covers pytest through uv.lock.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -13,7 +13,6 @@ import re
 import threading
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .config import Config
@@ -48,7 +47,7 @@ def _content_type(path) -> str:
 class _Handler(BaseHTTPRequestHandler):
     server_version = "UsageDashboard/1.0"
 
-    def __init__(self, *args, app: "UsageServer", **kwargs):
+    def __init__(self, *args, app: UsageServer, **kwargs):
         self.app = app
         super().__init__(*args, **kwargs)
 
@@ -87,8 +86,19 @@ class _Handler(BaseHTTPRequestHandler):
             return None
         return candidate
 
+    def _host_is_local(self) -> bool:
+        """Only this machine's own names reach the dashboard. A page on any
+        other host name that rebinds its DNS to 127.0.0.1 (DNS rebinding)
+        must not read session titles and messages through the browser.
+        Host names are case-insensitive and may end in the root's dot."""
+        name, _, port = self.headers.get("Host", "").rpartition(":")
+        return port == str(self.app.port) and name.lower().removesuffix(".") in ("127.0.0.1", "localhost")
+
     def do_GET(self):  # noqa: N802 (stdlib method name)
         try:
+            if not self._host_is_local():
+                self._write_json(403, {"error": "the dashboard answers only to 127.0.0.1 and localhost"})
+                return
             url = urlparse(self.path)
             if url.path == "/api/office":
                 payload = self.app.office.payload()
@@ -127,7 +137,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 class UsageServer:
     def __init__(self, cfg: Config, store: Store, runner: Runner = default_runner,
-                port: Optional[int] = None) -> None:
+                port: int | None = None) -> None:
         self.cfg = cfg
         self.store = store
         self.runner = runner
@@ -135,8 +145,8 @@ class UsageServer:
         self.office = Office(cfg.state_dir, cfg.claude_dir, cfg.office_working_seconds, cfg.office_gone_after_seconds)
         self.last_warnings = []
         self._stop = threading.Event()
-        self._refresh_thread: Optional[threading.Thread] = None
-        self._serve_thread: Optional[threading.Thread] = None
+        self._refresh_thread: threading.Thread | None = None
+        self._serve_thread: threading.Thread | None = None
         bind_port = cfg.port if port is None else port
 
         def handler(*args, **kwargs):

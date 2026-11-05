@@ -7,6 +7,7 @@ that every `data.<key>` / `summary.<key>` / `sess.<key>` / `pt.<key>` /
 `pr.<key>` access in `app.js` names a key that `build_summary` actually
 produces.
 """
+import hashlib
 import html as html_lib
 import json
 import re
@@ -21,7 +22,7 @@ from usage.summary import build_summary
 
 DASH = REPO_ROOT / "dashboard"
 IDS = ["tabs", "theme", "pane-month", "pane-sessions", "pane-projects", "pane-office", "tab-office",
-       "office-scene", "office-card", "office-hint", "title-month", "subtitle",
+       "office-view", "office-theme", "office-roster", "office-card", "office-hint", "title-month", "subtitle",
        "trend-strip", "chart", "chart-legend", "split-model", "split-tokens", "movers-body",
        "sessions-body", "detail", "projects-body", "month-tips", "foot-note", "stale",
        "skills-body", "skills-hint", "office-rail", "office-rail-list", "office-rail-toggle"]
@@ -39,8 +40,12 @@ def _js():
     return (DASH / "app.js").read_text()
 
 
-OFFICE_JS = ["office.js", "office-sim.js", "office-world.js", "office-cast.js", "office-figures.js", "office-rail.js"]
-DOM_FREE = ["format.js", "office-sim.js", "office-world.js", "office-cast.js", "office-figures.js", "office-rail.js"]
+# The DOM-free office files are classic scripts that node can drive; the
+# three.js side (kit, decor, scenery, people, the view) is ES modules under
+# office.js.
+DOM_FREE = ["format.js", "office-cast.js", "office-themes.js", "office-floor.js", "office-sim.js", "office-rail.js"]
+OFFICE_MODULES = ["office.js", "office-3d.js", "office-kit.js", "office-decor.js", "office-scenery.js", "office-people.js"]
+OFFICE_JS = DOM_FREE[1:] + OFFICE_MODULES
 
 
 def _office_js():
@@ -52,11 +57,11 @@ def test_index_has_required_ids_and_assets():
     for i in IDS:
         assert 'id="%s"' % i in html, i
     assert 'href="styles.css"' in html and 'src="app.js"' in html
-    assert 'href="office.css"' in html and 'src="office.js"' in html
+    assert 'href="office.css"' in html and '<script type="module" src="office.js">' in html
     assert (DASH / "office.css").is_file()
-    # the cast (model tiers, daylight), the world (layout, scenery) and the
+    # the cast (model tiers, daylight), the themes, the floor plan and the
     # simulation (state machines, steering) are DOM-free files, all loaded
-    # before the controller that uses them
+    # before the controller module that uses them
     for name in DOM_FREE:
         assert (DASH / name).is_file(), name
         assert html.index('src="%s"' % name) < html.index('src="office.js"'), name
@@ -64,10 +69,14 @@ def test_index_has_required_ids_and_assets():
         assert "document." not in source and "getElementById" not in source, "%s must not touch the DOM" % name
     # format.js (esc, fmtTokens) precedes app.js and every office file; the
     # cast (tiers, families) precedes the files that read it at load time
-    for name in ["app.js"] + OFFICE_JS:
+    for name in ["app.js"] + DOM_FREE[1:] + ["office.js"]:
         assert html.index('src="format.js"') < html.index('src="%s"' % name), name
-    for name in ("office-world.js", "office-sim.js", "office-figures.js", "office-rail.js"):
+    for name in ("office-themes.js", "office-floor.js", "office-sim.js", "office-rail.js"):
         assert html.index('src="office-cast.js"') < html.index('src="%s"' % name), name
+    assert html.index('src="office-themes.js"') < html.index('src="office-floor.js"')
+    for name in OFFICE_MODULES[1:]:
+        assert (DASH / name).is_file(), name
+        assert 'src="%s"' % name not in html, "%s is imported by office.js, not loaded by a tag" % name
     assert '<meta name="color-scheme" content="light dark">' in html
 
 
@@ -254,20 +263,51 @@ def test_office_js_only_reads_keys_the_office_payload_produces(tmp_path):
         assert used, "expected the office scripts to read some %s.<key>" % var
 
 
-def test_office_states_have_static_poses_under_reduced_motion():
+def test_three_is_vendored_and_mapped_offline():
+    """three.js loads from the dashboard itself (no CDN), through an import
+    map that office-3d.js's bare `import ... from 'three'` resolves against,
+    and the vendored files are the ones VERSION records."""
+    html = _html()
+    imports = json.loads(re.search(r'<script type="importmap">(.*?)</script>', html, flags=re.S).group(1))["imports"]
+    assert imports == {"three": "./vendor/three/three.module.js"}
+    assert html.index('type="importmap"') < html.index('type="module"')
+    assert "https://" not in html.split("</head>")[0].split('type="importmap"')[1]
+    vendor = DASH / "vendor" / "three"
+    pins = re.findall(r"^([0-9a-f]{64})  (\S+)$", (vendor / "VERSION").read_text(), flags=re.M)
+    assert {name for _, name in pins} == {"three.module.js", "three.core.js", "LICENSE"}
+    for digest, name in pins:
+        assert hashlib.sha256((vendor / name).read_bytes()).hexdigest() == digest, name
+
+
+def test_npm_manifest_pins_the_vendored_three():
+    """package.json exists so Dependabot can see the vendored three.js. When a
+    bump lands there, this fails until scripts/vendor_three.py re-vendors."""
+    vendored = re.match(r"three (\S+)\nsource \S+ \((\S+)\)\n", (DASH / "vendor" / "three" / "VERSION").read_text())
+    manifest = json.loads((REPO_ROOT / "package.json").read_text())
+    locked = json.loads((REPO_ROOT / "package-lock.json").read_text())["packages"]
+    assert manifest["dependencies"]["three"] == vendored[1]
+    assert locked[""]["dependencies"]["three"] == vendored[1]
+    assert locked["node_modules/three"]["version"] == vendored[1]
+    assert locked["node_modules/three"]["integrity"] == vendored[2]
+
+
+def test_office_people_pose_every_sim_state():
+    """Every pose the simulation can set has a pose in office-people.js, so
+    no state renders as a figure frozen in the default stance."""
+    sim = (DASH / "office-sim.js").read_text()
+    people = (DASH / "office-people.js").read_text()
+    block = people[people.index("const POSES = {"):people.index("\n};", people.index("const POSES = {"))]
+    poses = set(re.findall(r"^  (\w+):", block, flags=re.M))
+    used = set(re.findall(r"pose = '(\w+)'", sim)) | set(re.findall(r"pose: '(\w+)'", sim))
+    assert used, "expected the simulation to set some poses"
+    assert used <= poses, "poses with no figure: %s" % sorted(used - poses)
+
+
+def test_office_css_has_night_and_reduced_motion():
     css = (DASH / "office.css").read_text()
+    assert ".office-stage.night" in css and "--sky-top" in css and "--sky-bottom" in css
     assert "prefers-reduced-motion" in css
-    for cls in (".worker.typing", ".worker.dozing", ".worker.walking", ".worker.thinking",
-                ".worker.lounging", ".worker.standing", ".worker.stalled", ".worker.handing"):
-        assert cls in css, cls
-
-
-def test_office_css_dresses_the_tiers_and_the_campus():
-    """The model tiers and the world beyond the rooms are styled, not just drawn."""
-    css = (DASH / "office.css").read_text()
-    for cls in (".tier-lead", ".tier-muse", ".tier-swift", ".aura", ".crown", ".monocle", ".cans",
-                ".ornament", ".chair.gold", ".plaza", ".canteen", ".board", ".rack", ".star", ".lamp",
-                ".intern", ".badge", ".tether", ".glyph", ".pod-more", ".office-rail", ".rail-row", ".linked"):
+    for cls in (".office-view", ".vacant", ".office-theme", ".office-rail", ".rail-row", ".linked"):
         assert cls in css, cls
 
 

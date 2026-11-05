@@ -1,15 +1,15 @@
 """Dollar figures from ccusage (spec §4.3). Verified against ccusage 20.0.20 JSON shapes."""
 import json
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
 
 from .store import Store, UNKNOWN_PROJECT
 
-Runner = Callable[[List[str]], Tuple[int, str, str]]
+type Runner = Callable[[list[str]], tuple[int, str, str]]
 
 
-def default_runner(cmd: List[str]) -> Tuple[int, str, str]:
+def default_runner(cmd: list[str]) -> tuple[int, str, str]:
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
         return p.returncode, p.stdout, p.stderr
@@ -25,22 +25,22 @@ def default_runner(cmd: List[str]) -> Tuple[int, str, str]:
 class SessionCost:
     session_id: str
     cost: float
-    model_costs: Dict[str, float]
+    model_costs: dict[str, float]
 
 
 @dataclass
 class DailyCost:
     day: str
     cost: float
-    model_costs: Dict[str, float]
+    model_costs: dict[str, float]
 
 
 @dataclass
 class CostResult:
     available: bool
-    sessions: List[SessionCost]
-    daily: List[DailyCost]
-    error: Optional[str]
+    sessions: list[SessionCost]
+    daily: list[DailyCost]
+    error: str | None
 
 
 def _coerce_float(value, default: float = 0.0) -> float:
@@ -50,8 +50,8 @@ def _coerce_float(value, default: float = 0.0) -> float:
         return default
 
 
-def _breakdown(items) -> Dict[str, float]:
-    out: Dict[str, float] = {}
+def _breakdown(items) -> dict[str, float]:
+    out: dict[str, float] = {}
     if not isinstance(items, list):
         return out
     for b in items:
@@ -63,7 +63,7 @@ def _breakdown(items) -> Dict[str, float]:
     return out
 
 
-def parse_session_json(text: str) -> List[SessionCost]:
+def parse_session_json(text: str) -> list[SessionCost]:
     data = json.loads(text)
     if not isinstance(data, dict):
         raise ValueError("ccusage session JSON: expected an object at top level, got %s" % type(data).__name__)
@@ -81,7 +81,7 @@ def parse_session_json(text: str) -> List[SessionCost]:
     return out
 
 
-def parse_daily_json(text: str) -> List[DailyCost]:
+def parse_daily_json(text: str) -> list[DailyCost]:
     data = json.loads(text)
     if not isinstance(data, dict):
         raise ValueError("ccusage daily JSON: expected an object at top level, got %s" % type(data).__name__)
@@ -100,7 +100,7 @@ def parse_daily_json(text: str) -> List[DailyCost]:
     return out
 
 
-def fetch_costs(command: List[str], runner: Runner = default_runner) -> CostResult:
+def fetch_costs(command: list[str], runner: Runner = default_runner) -> CostResult:
     try:
         rc, out, err = runner(list(command) + ["session", "--json", "--offline"])
         if rc != 0:
@@ -115,7 +115,7 @@ def fetch_costs(command: List[str], runner: Runner = default_runner) -> CostResu
     return CostResult(True, sessions, daily, None)
 
 
-def allocate(total: float, day_weights: List[Tuple[str, float]]) -> Dict[str, float]:
+def allocate(total: float, day_weights: list[tuple[str, float]]) -> dict[str, float]:
     if not day_weights:
         return {}
     weight_sum = sum(w for _, w in day_weights)
@@ -129,13 +129,13 @@ def apply_costs(store: Store, result: CostResult) -> None:
     if not result.available:
         return
     store.set_session_costs([(s.session_id, s.cost, s.model_costs) for s in result.sessions])
-    daily_rows: List[Tuple[str, str, float]] = []
+    daily_rows: list[tuple[str, str, float]] = []
     for d in result.daily:
         daily_rows.append((d.day, "*", d.cost))
         daily_rows.extend((d.day, m, c) for m, c in d.model_costs.items())
     store.set_daily_costs(daily_rows)
     projects = {s["session_id"]: (s.get("project") or UNKNOWN_PROJECT) for s in store.sessions()}
-    alloc_rows: List[Tuple[str, str, str, float]] = []
+    alloc_rows: list[tuple[str, str, str, float]] = []
     for s in result.sessions:
         if s.session_id not in projects:
             continue
@@ -144,7 +144,7 @@ def apply_costs(store: Store, result: CostResult) -> None:
     store.set_allocated_costs(alloc_rows)
 
 
-def blended_price(cost: Optional[float], total_tokens: int) -> Optional[float]:
+def blended_price(cost: float | None, total_tokens: int) -> float | None:
     if cost is None or not total_tokens:
         return None
     return cost / total_tokens

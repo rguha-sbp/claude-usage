@@ -4,7 +4,7 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from .parser import FileState, SessionAgg, _safe_parse_ts
 
@@ -88,7 +88,7 @@ CALLS_UNIQUE_MSG_INDEX = "CREATE UNIQUE INDEX IF NOT EXISTS calls_msgid_main ON 
 SCHEMA_VERSION = "4"
 
 
-def _local_dt(ts: Optional[str]) -> Optional[datetime]:
+def _local_dt(ts: str | None) -> datetime | None:
     """`ts` in the machine's local timezone, or None when `ts` is missing or
     not a well-formed timestamp. parse_records deliberately tolerates
     malformed timestamps on individual calls (spec Sec 6), so this must
@@ -100,13 +100,13 @@ def _local_dt(ts: Optional[str]) -> Optional[datetime]:
     return dt.astimezone() if dt is not None else None
 
 
-def local_day(ts: Optional[str]) -> Optional[str]:
+def local_day(ts: str | None) -> str | None:
     """'YYYY-MM-DD' in the machine's local timezone (see _local_dt)."""
     dt = _local_dt(ts)
     return dt.date().isoformat() if dt is not None else None
 
 
-def local_hour(ts: Optional[str]) -> Optional[int]:
+def local_hour(ts: str | None) -> int | None:
     """0-23 in the machine's local timezone (see _local_dt)."""
     dt = _local_dt(ts)
     return dt.hour if dt is not None else None
@@ -222,12 +222,12 @@ class Store:
                             (r["session_id"], mid))
 
     # -- files -------------------------------------------------------------
-    def file_states(self) -> Dict[str, FileState]:
+    def file_states(self) -> dict[str, FileState]:
         rows = self.conn.execute("SELECT * FROM files").fetchall()
         return {r["path"]: FileState(r["path"], r["size"], r["mtime"], r["offset"], r["last_call_ts"])
                 for r in rows}
 
-    def save_file_states(self, states: Dict[str, FileState]) -> None:
+    def save_file_states(self, states: dict[str, FileState]) -> None:
         # UPSERT-only: merges into existing rows, never replaces the table.
         # parse_incremental only returns states for files read this round,
         # so files not present in `states` must be left untouched.
@@ -323,7 +323,7 @@ class Store:
                 "ON CONFLICT(name) DO UPDATE SET bytes=max(bytes,excluded.bytes)",
                 list(agg.skill_bodies.items()))
 
-    def mark_sources(self, present_paths: Set[str]) -> None:
+    def mark_sources(self, present_paths: set[str]) -> None:
         with self.conn:
             ids = [r["session_id"] for r in self.conn.execute("SELECT session_id FROM sessions")]
             for sid in ids:
@@ -366,27 +366,27 @@ class Store:
                 (threshold, threshold, threshold))
 
     # -- costs -------------------------------------------------------------
-    def set_session_costs(self, rows: List[Tuple[str, float, Dict[str, float]]]) -> None:
+    def set_session_costs(self, rows: list[tuple[str, float, dict[str, float]]]) -> None:
         with self.conn:
             self.conn.executemany(
                 "INSERT INTO costs_session(session_id,cost,models,fetched_at) VALUES(?,?,?,?) "
                 "ON CONFLICT(session_id) DO UPDATE SET cost=excluded.cost, models=excluded.models, fetched_at=excluded.fetched_at",
                 [(sid, cost, json.dumps(models), _now()) for sid, cost, models in rows])
 
-    def set_daily_costs(self, rows: List[Tuple[str, str, float]]) -> None:
+    def set_daily_costs(self, rows: list[tuple[str, str, float]]) -> None:
         with self.conn:
             self.conn.executemany(
                 "INSERT INTO costs_daily(day,model,cost) VALUES(?,?,?) "
                 "ON CONFLICT(day,model) DO UPDATE SET cost=excluded.cost", rows)
 
-    def set_allocated_costs(self, rows: List[Tuple[str, str, str, float]]) -> None:
+    def set_allocated_costs(self, rows: list[tuple[str, str, str, float]]) -> None:
         with self.conn:
             self.conn.executemany(
                 "INSERT INTO costs_allocated(day,project,session_id,cost) VALUES(?,?,?,?) "
                 "ON CONFLICT(day,session_id) DO UPDATE SET project=excluded.project, cost=excluded.cost", rows)
 
     # -- queries -----------------------------------------------------------
-    def _session_dict(self, r: sqlite3.Row) -> Dict[str, Any]:
+    def _session_dict(self, r: sqlite3.Row) -> dict[str, Any]:
         d = dict(r)
         d["models"] = json.loads(d.get("models") or "{}")
         d["repeated_reads"] = json.loads(d.get("repeated_reads") or "{}")
@@ -398,7 +398,7 @@ class Store:
     _SESSION_SQL = ("SELECT s.*, cs.cost AS cost, cs.models AS cost_models FROM sessions s "
                     "LEFT JOIN costs_session cs ON cs.session_id=s.session_id ")
 
-    def sessions(self, period: Optional[str] = None) -> List[Dict[str, Any]]:
+    def sessions(self, period: str | None = None) -> list[dict[str, Any]]:
         """Sessions with at least one call in `period` (see _prefix), newest
         first; every session when `period` is None."""
         if period is None:
@@ -409,46 +409,46 @@ class Store:
                 "ORDER BY s.last_ts DESC", (_prefix(period),)).fetchall()
         return [self._session_dict(r) for r in rows]
 
-    def session(self, session_id: str) -> Optional[Dict[str, Any]]:
+    def session(self, session_id: str) -> dict[str, Any] | None:
         r = self.conn.execute(self._SESSION_SQL + "WHERE s.session_id=?", (session_id,)).fetchone()
         return self._session_dict(r) if r else None
 
-    def session_days(self, session_id: str) -> List[Tuple[str, float]]:
+    def session_days(self, session_id: str) -> list[tuple[str, float]]:
         rows = self.conn.execute(
             "SELECT day, SUM(input_tokens) i, SUM(cache_write) cw, SUM(cache_read) cr, SUM(output) o "
             "FROM calls WHERE session_id=? AND day IS NOT NULL GROUP BY day ORDER BY day", (session_id,)).fetchall()
         return [(r["day"], weighted(r["i"], r["cw"], r["cr"], r["o"])) for r in rows]
 
-    def rollup(self, period: str) -> List[Dict[str, Any]]:
+    def rollup(self, period: str) -> list[dict[str, Any]]:
         """Per (day, hour, project, model) usage rows in `period`, ordered by
         day then hour. Rebuilt by recompute."""
         rows = self.conn.execute(
             "SELECT * FROM rollup WHERE day LIKE ? ORDER BY day, hour", (_prefix(period),)).fetchall()
         return [dict(r) for r in rows]
 
-    def daily_costs(self, period: str) -> Dict[str, Dict[str, float]]:
-        out: Dict[str, Dict[str, float]] = {}
+    def daily_costs(self, period: str) -> dict[str, dict[str, float]]:
+        out: dict[str, dict[str, float]] = {}
         for r in self.conn.execute("SELECT day, model, cost FROM costs_daily WHERE day LIKE ?", (_prefix(period),)):
             out.setdefault(r["day"], {})[r["model"]] = r["cost"]
         return out
 
-    def allocated_by_project(self, period: str) -> Dict[str, float]:
+    def allocated_by_project(self, period: str) -> dict[str, float]:
         rows = self.conn.execute(
             "SELECT project, SUM(cost) c FROM costs_allocated WHERE day LIKE ? GROUP BY project", (_prefix(period),))
         return {r["project"]: r["c"] for r in rows}
 
-    def months_with_data(self) -> List[str]:
+    def months_with_data(self) -> list[str]:
         rows = self.conn.execute(
             "SELECT DISTINCT substr(day,1,7) m FROM calls WHERE day IS NOT NULL ORDER BY m").fetchall()
         return [r["m"] for r in rows]
 
-    def days_with_data(self, month: str) -> List[str]:
+    def days_with_data(self, month: str) -> list[str]:
         rows = self.conn.execute(
             "SELECT DISTINCT day FROM calls WHERE day LIKE ? ORDER BY day", (_prefix(month),)).fetchall()
         return [r["day"] for r in rows]
 
     # -- skills ------------------------------------------------------------
-    def skill_usage(self, period: str) -> List[Dict[str, Any]]:
+    def skill_usage(self, period: str) -> list[dict[str, Any]]:
         """One row per skill load / injected attachment whose load day falls
         in `period` (see _prefix): session_id, name, kind, ts,
         injected_tokens, exact, calls_carried.
@@ -467,12 +467,12 @@ class Store:
             "SELECT l.session_id, l.load_id, l.name, l.kind, l.ts, l.agent_id, l.body_bytes, b.bytes AS known_bytes "
             "FROM skill_loads l LEFT JOIN skill_bodies b ON b.name=l.name "
             "WHERE l.day LIKE ? ORDER BY l.ts, l.session_id, l.name", (_prefix(period),)).fetchall()
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for r in rows:
             size = r["body_bytes"] if r["body_bytes"] is not None else r["known_bytes"]
             exact = size is not None
             if exact:
-                tokens: Optional[int] = size // BYTES_PER_TOKEN
+                tokens: int | None = size // BYTES_PER_TOKEN
             else:
                 tokens = None
                 load = self.conn.execute(
@@ -493,7 +493,7 @@ class Store:
         return out
 
     # -- meta --------------------------------------------------------------
-    def meta_get(self, key: str, default: Optional[str] = None) -> Optional[str]:
+    def meta_get(self, key: str, default: str | None = None) -> str | None:
         r = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return r["value"] if r else default
 

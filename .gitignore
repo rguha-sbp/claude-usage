@@ -16,3 +16,4 @@ build/
 .impeccable/
 PRODUCT.md
 docs/superpowers/
+node_modules/

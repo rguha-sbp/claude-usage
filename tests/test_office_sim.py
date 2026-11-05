@@ -1,8 +1,9 @@
-"""dashboard/office-sim.js, office-world.js and office-cast.js are DOM-free on
-purpose so the state machines, the campus layout and the model tiers can be
-driven under node (tests/office_*_check.js). Skipped when node is not
-installed."""
+"""dashboard/office-sim.js, office-floor.js, office-themes.js, office-cast.js
+and office-rail.js are DOM-free on purpose so the state machines, the floor
+layout, the themes and the model tiers can be driven under node
+(tests/office_*_check.js). Skipped when node is not installed."""
 import json
+import re
 import shutil
 import subprocess
 
@@ -25,8 +26,9 @@ def test_office_simulation_behaves():
     report = _run("office_sim_check.js")
     interns = report["interns"]
     assert report["agentsLeft"] == ["a", "b", "c", "e"]
-    assert report["seen"]["c"].get("walking") is None       # working sessions stay seated
-    assert report["seen"]["a"]["walking"] > 0 and report["seen"]["d"]["walking"] > 0
+    assert report["seen"]["d"]["walking"] > 0               # a sleeper walks only once its session ends
+    assert report["seen"]["c"]["walking"] > 0               # working leads take breaks
+    assert report["bPose"] == "dozing" and report["bAtSeat"]
     assert report["maxSpeed"] <= 2.35                       # the swift tier's ceiling
     assert report["top"]["e"] > report["top"]["b"]          # Haiku outpaces Sonnet
     assert report["crossProject"] and report["loungeBubble"]
@@ -45,19 +47,37 @@ def test_model_tiers_and_daylight():
 
 
 @needs_node
-def test_world_layout_and_scene():
-    report = _run("office_world_check.js")
-    assert report["blocks"] == 2 and report["canteen"] >= 2
-    assert report["width"] > 0 and report["height"] > 0
-    # the simulation driven over the real campus, not a hand-written fixture
-    assert report["reachedCanteen"] and report["home"] > 0
-    assert report["podOk"]
+def test_floor_layout_holds_for_every_theme():
+    """The floor check lays out 1, 4 and 12 projects in every theme, checks
+    the plan with its own collision code, then drives the simulation over
+    the real places and fails on anyone who walks through furniture."""
+    report = _run("office_floor_check.js")
+    assert set(report["floors"]) == {"%d/%s" % (n, t) for n in (1, 4, 12) for t in ("studio", "loft", "greenhouse")}
+    assert report["themesDiffer"]
+    assert all(count > 50 for count in report["decor"].values())  # a decorated floor, not a bare one
+    for seen in report["sim"].values():
+        assert seen["canteen"] and seen["sofa"] and seen["pod"] and seen["door"]
+        assert seen["relaid"].endswith("seat moved")             # a re-layout during a break moved the walker's desk
+    # sessions ending at the canteen, at another row's cooler and mid-walk
+    # leave on legs that cross no desk, partition or decor
+    assert all(count > 0 for count in report["leavers"].values())
+
+
+def _members(name, const):
+    """The member names of `const <const> = { ... };` in a dashboard file."""
+    source = (REPO_ROOT / "dashboard" / name).read_text()
+    start = source.index("const %s = {" % const)
+    block = source[start:source.index("\n};", start)]
+    return set(re.findall(r"^  (\w+)\(", block, flags=re.M)) | set(re.findall(r"^  (\w+):", block, flags=re.M))
 
 
 @needs_node
-def test_figures_are_clean_strings():
-    report = _run("office_figures_check.js")
-    assert report["lead"] > 500 and report["intern"] > 500
+def test_themes_only_name_what_the_scenery_draws():
+    report = _run("office_themes_check.js")
+    assert report["themes"] == ["studio", "loft", "greenhouse"]
+    assert set(report["patterns"]) <= _members("office-scenery.js", "PATTERNS")
+    assert set(report["partitions"]) <= _members("office-scenery.js", "PARTITIONS")
+    assert set(report["kinds"]) <= _members("office-decor.js", "BUILDERS")
 
 
 @needs_node

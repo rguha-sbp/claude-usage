@@ -1,14 +1,14 @@
 [project]
 name = "claude-usage-dashboard"
 version = "0.1.0"
-requires-python = ">=3.9"
+requires-python = ">=3.15"
 dependencies = []
 
 [project.scripts]
 usage = "usage.__main__:main"
 
 [dependency-groups]
-dev = ["pytest"]
+dev = ["pytest>=9.2.0"]
 
 [build-system]
 requires = ["setuptools>=61"]
