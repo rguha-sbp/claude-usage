@@ -4,7 +4,7 @@ import json
 from dataclasses import fields
 from datetime import datetime, timedelta, timezone
 
-from tests.helpers import assistant_msg, iso, user_msg, write_jsonl
+from tests.helpers import assistant_msg, iso, tool_result_msg, user_msg, write_jsonl
 from usage.agents import AgentReader, SubAgent, doing_of
 from usage.parser import parse_records
 
@@ -94,12 +94,23 @@ def test_a_legacy_text_reply_is_done_once_quiet(tmp_path):
     assert a.state == "running" and a.doing == {"tool": "replying", "target": ""}
 
 
-def test_stalled_after_fifteen_quiet_minutes(tmp_path):
+def test_a_pending_tool_call_is_work_for_up_to_fifteen_minutes(tmp_path):
     transcript, folder = _session(tmp_path)
     _agent(folder, "a1", [assistant_msg("m1", iso(0), content=[tool("Bash", command="sleep 9999")])])
-    later = NOW + timedelta(minutes=11)                                                  # 16 min after iso(0)
-    assert _by_id(_read(tmp_path, transcript, later)[0])["a1"].state == "stalled"
     assert _by_id(_read(tmp_path, transcript)[0])["a1"].state == "running"                # a long Bash is still work
+    later = NOW + timedelta(minutes=11)                                                  # 16 min after iso(0)
+    assert _by_id(_read(tmp_path, transcript, later)[0])["a1"].state == "asleep"
+
+
+def test_asleep_once_quiet_past_the_working_window(tmp_path):
+    transcript, folder = _session(tmp_path)
+    _agent(folder, "a1", [assistant_msg("m1", iso(1), content=[tool("Grep", pattern="p")]),
+                          tool_result_msg("hit", iso(2))])
+    assert _by_id(_read(tmp_path, transcript)[0])["a1"].state == "asleep"                # 3 min quiet, no tool pending
+    soon = datetime(2026, 9, 1, 9, 2, 30, tzinfo=timezone.utc)
+    assert _by_id(_read(tmp_path, transcript, soon)[0])["a1"].state == "running"         # 30 s quiet
+    patient = AgentReader(tmp_path, working_seconds=600)
+    assert _by_id(patient.session_agents(transcript, NOW)[0])["a1"].state == "running"
 
 
 def test_thinking_only_keeps_the_last_doing_and_targets_are_trimmed(tmp_path):

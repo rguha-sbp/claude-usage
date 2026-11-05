@@ -25,8 +25,9 @@ def test_office_simulation_behaves():
     report = _run("office_sim_check.js")
     interns = report["interns"]
     assert report["agentsLeft"] == ["a", "b", "c", "e"]
-    assert report["seen"]["c"].get("walking") is None       # working sessions stay seated
-    assert report["seen"]["a"]["walking"] > 0 and report["seen"]["d"]["walking"] > 0
+    assert report["seen"]["d"]["walking"] > 0               # a sleeper walks only once its session ends
+    assert report["seen"]["c"]["walking"] > 0               # working leads take breaks
+    assert report["bPose"] == "dozing" and report["bAtSeat"]
     assert report["maxSpeed"] <= 2.35                       # the swift tier's ceiling
     assert report["top"]["e"] > report["top"]["b"]          # Haiku outpaces Sonnet
     assert report["crossProject"] and report["loungeBubble"]

@@ -14,9 +14,9 @@
    corridor in front of the rooms (constant x + y).
 
    Interns (spec Sec 13.4) are agents too, keyed `session/agent_id`: Standing,
-   Stalled and HandingBack sit beside the worker states and reuse Walk,
-   Leaving and Gone. A lead with a running sub-agent reads as working, so it
-   never wanders off while its team works. */
+   Napping and HandingBack sit beside the worker states and reuse Walk,
+   Leaving and Gone. Whether a lead works is the server's call alone (it
+   counts a lead blocked on a foreground sub-agent as working). */
 window.OfficeSim = (function () {
   'use strict';
 
@@ -26,6 +26,7 @@ window.OfficeSim = (function () {
   var ARRIVE = 0.05;        // "there" when this close
   var WALK_TIMEOUT = 14;    // seconds: a stuck walker snaps to its target
   var CHAT_RANGE = 2.5;     // tiles: how far apart two loungers still talk
+  var BREAK_CHANCE = 0.3;   // a working lead between thoughts steps away this often
 
   // ------------------------------------------------------------ helpers
   var hash = window.OfficeCast.hash;          // office-cast.js loads first
@@ -103,6 +104,18 @@ window.OfficeSim = (function () {
 
   function leaveIfGone(a) { return a.server === 'gone' ? new Leaving() : null; }
 
+  /* An errand is work time spent away from the desk, so it ends the moment
+     the session stops working: a gone session walks out, a sleeper walks
+     home and dozes. */
+  function errand(a, spot, then) { return walkTo(a, spot, then, { errand: true }); }
+  function backToDesk(a, sim) {
+    return goHome(a, sim, function () { return a.server === 'working' ? new Typing() : new Dozing(); });
+  }
+  function errandOver(a, sim) {
+    if (a.server === 'working') return null;
+    return leaveIfGone(a) || backToDesk(a, sim);
+  }
+
   function Typing() {}
   Typing.prototype.pose = 'typing';
   Typing.prototype.enter = function (a) { a.timer = between(a.rng, 9, 28); };
@@ -118,38 +131,34 @@ window.OfficeSim = (function () {
   Thinking.prototype.update = function (a, sim, dt) {
     if (a.server !== 'working') return leaveIfGone(a) || new Dozing();
     a.timer -= dt;
-    return a.timer <= 0 ? new Typing() : null;
+    if (a.timer > 0) return null;
+    return sim.wander && a.rng() < BREAK_CHANCE ? takeBreak(a, sim) : new Typing();
   };
 
+  /* A sleeper stays at its desk until its session works again or ends. */
   function Dozing() {}
   Dozing.prototype.pose = 'dozing';
-  Dozing.prototype.enter = function (a, sim) {
-    // the first nap is short so a fresh page comes alive; later ones are longer
-    a.timer = sim.wander ? (a.errands ? between(a.rng, 45, 120) : between(a.rng, 12, 35)) : Infinity;
-  };
-  Dozing.prototype.update = function (a, sim, dt) {
-    if (a.server === 'working') return new Typing();
-    if (a.server === 'gone') return new Leaving();
-    a.timer -= dt;
-    if (a.timer > 0) return null;
-    a.errands += 1;
-    // Coffee is contagious: a worker is far likelier to head for the canteen
-    // when somebody is already standing there. Otherwise it is a toss-up
-    // between the canteen, a chat in the aisle and the water cooler.
+  Dozing.prototype.enter = function () {};
+  Dozing.prototype.update = function (a) { return a.server === 'working' ? new Typing() : leaveIfGone(a); };
+
+  /* Coffee is contagious: a worker is far likelier to head for the canteen
+     when somebody is already standing there. Otherwise it is a toss-up
+     between the canteen, a chat in the aisle and the water cooler. */
+  function takeBreak(a, sim) {
     if (a.rng() < (sim.anyLounger(a) ? 0.85 : 0.5)) {
       var table = sim.freeSpot(a, a.places.canteen, 'canteen');
-      if (table) return walkTo(a, table, function () { return new Lounging(); });
+      if (table) return errand(a, table, function () { return new Lounging(); });
     }
     var partner = sim.partnerFor(a);
     if (partner && a.rng() < 0.6) {
-      sim.transition(partner, walkTo(partner, partner.places.meet2, function () { return new Chatting(a); }));
-      return walkTo(a, a.places.meet, function () { return new Chatting(partner); });
+      sim.transition(partner, errand(partner, partner.places.meet2, function () { return new Chatting(a); }));
+      return errand(a, a.places.meet, function () { return new Chatting(partner); });
     }
-    return walkTo(a, a.places.stand || a.places.cooler, function () { return new Drinking(); });
-  };
+    return errand(a, a.places.stand || a.places.cooler, function () { return new Drinking(); });
+  }
 
-  /* Walk the `points`, then become whatever `then()` returns. A worker
-     called back to work heads home first; a gone session walks out. */
+  /* Walk the `points`, then become whatever `then()` returns. A gone
+     session walks out; an errand ends early once the session stops working. */
   function Walk(points, target, then, opts) {
     this.points = points;
     this.target = target;
@@ -166,7 +175,7 @@ window.OfficeSim = (function () {
   Walk.prototype.update = function (a, sim, dt) {
     if (!this.opts.leaving) {
       if (a.server === 'gone') return new Leaving();
-      if (a.server === 'working' && !this.opts.home) return goHome(a, sim, function () { return new Typing(); });
+      if (this.opts.errand) { var over = errandOver(a, sim); if (over) return over; }
     }
     a.walked += dt;
     if (a.walked > WALK_TIMEOUT) a.wp = a.route.length;         // stuck check: snap and move on
@@ -182,10 +191,8 @@ window.OfficeSim = (function () {
   Drinking.prototype.pose = 'drinking';
   Drinking.prototype.enter = function (a) { a.timer = between(a.rng, 3.5, 6); a.facing = 1; };   // the cooler is to the right
   Drinking.prototype.update = function (a, sim, dt) {
-    if (a.server === 'gone') return new Leaving();
-    if (a.server === 'working') return goHome(a, sim, function () { return new Typing(); });
     a.timer -= dt;
-    return a.timer <= 0 ? goHome(a, sim, function () { return new Dozing(); }) : null;
+    return errandOver(a, sim) || (a.timer <= 0 ? backToDesk(a, sim) : null);
   };
 
   /* The canteen out on the plaza: the one place where workers from
@@ -198,8 +205,8 @@ window.OfficeSim = (function () {
     a.extended = false;
   };
   Lounging.prototype.update = function (a, sim, dt) {
-    if (a.server === 'gone') return new Leaving();
-    if (a.server === 'working') return goHome(a, sim, function () { return new Typing(); });
+    var over = errandOver(a, sim);
+    if (over) return over;
     var mate = sim.loungerNear(a);
     if (mate) {
       if (!a.extended) { a.extended = true; a.timer += 12; }   // nobody cuts a conversation short
@@ -210,7 +217,7 @@ window.OfficeSim = (function () {
       a.bubble = false;
     }
     a.timer -= dt;
-    return a.timer <= 0 ? goHome(a, sim, function () { return new Dozing(); }) : null;
+    return a.timer <= 0 ? backToDesk(a, sim) : null;
   };
   Lounging.prototype.exit = function (a) { a.bubble = false; };
 
@@ -222,14 +229,14 @@ window.OfficeSim = (function () {
     a.facing = (a.pos.x - a.pos.y) < (this.partner.pos.x - this.partner.pos.y) ? 1 : -1;
   };
   Chatting.prototype.update = function (a, sim, dt) {
-    if (a.server === 'gone') return new Leaving();
-    if (a.server === 'working') return goHome(a, sim, function () { return new Typing(); });
+    var over = errandOver(a, sim);
+    if (over) return over;
     var other = this.partner.state;
     var partnerHere = other && (other.pose === 'chatting' || (other.pose === 'walking' && !other.opts.home));
     a.timer -= dt;
     a.bubbleAt = (a.bubbleAt + dt) % 4;
     a.bubble = a.bubbleAt < 2;
-    if (a.timer <= 0 || !partnerHere) { a.bubble = false; return goHome(a, sim, function () { return new Dozing(); }); }
+    if (a.timer <= 0 || !partnerHere) { a.bubble = false; return backToDesk(a, sim); }
     return null;
   };
   Chatting.prototype.exit = function (a) { a.bubble = false; };
@@ -251,18 +258,19 @@ window.OfficeSim = (function () {
   // ----------------------------------------------------------- interns
   /* A sub-agent is an intern (spec Sec 13.4). It walks in from the doorway
      to a standing slot by its lead's desk, works there while its agent
-     runs, walks to the lead's desk to hand back once the agent is done, and
-     walks out. For an intern `a.server` is the agent's state -- running,
-     stalled, done -- or gone once the payload stops listing it. */
+     runs, dozes there while its agent is asleep, walks to the lead's desk to
+     hand back once the agent is done, and walks out. For an intern
+     `a.server` is the agent's state -- running, asleep, done -- or gone once
+     the payload stops listing it. */
   function internNext(a, sim, here) {
     var gone = leaveIfGone(a);
     if (gone) return gone;
     if (a.server === 'done') {
       return sim.wander ? walkTo(a, a.places.handoff, function () { return new HandingBack(); }) : new Gone();
     }
-    var want = a.server === 'stalled' ? 'stalled' : 'standing';
+    var want = a.server === 'asleep' ? 'dozing' : 'standing';
     if (want === here) return null;
-    return want === 'stalled' ? new Stalled() : new Standing();
+    return want === 'dozing' ? new Napping() : new Standing();
   }
 
   function Standing() {}
@@ -270,10 +278,10 @@ window.OfficeSim = (function () {
   Standing.prototype.enter = function () {};
   Standing.prototype.update = function (a, sim) { return internNext(a, sim, 'standing'); };
 
-  function Stalled() {}
-  Stalled.prototype.pose = 'stalled';
-  Stalled.prototype.enter = function () {};
-  Stalled.prototype.update = function (a, sim) { return internNext(a, sim, 'stalled'); };
+  function Napping() {}
+  Napping.prototype.pose = 'dozing';
+  Napping.prototype.enter = function () {};
+  Napping.prototype.update = function (a, sim) { return internNext(a, sim, 'dozing'); };
 
   function HandingBack() {}
   HandingBack.prototype.pose = 'handing';
@@ -299,7 +307,7 @@ window.OfficeSim = (function () {
   function newAgent(id, pos, lane) {
     var h = hash(id);
     return { id: id, rng: rng(h), pos: copy(pos), vel: { x: 0, y: 0 }, facing: 1,
-             bubble: false, errands: 0, popped: false, done: false, leaving: false, state: null,
+             bubble: false, popped: false, done: false, leaving: false, state: null,
              route: [], wp: 0, held: null, lane: lane, kind: 'lead',
              look: { hair: h % 5, glasses: ((h >>> 3) % 3) === 0, coat: ((h >>> 5) % 4) === 0 } };
   }
@@ -328,9 +336,8 @@ window.OfficeSim = (function () {
 
   /* Server payload in, agents updated: new sessions get an agent at their
      seat, missing ones are told they are gone, and a seated agent whose
-     desk moved (rooms re-laid out) is moved with it. A lead with a running
-     sub-agent counts as working -- it is waiting on its team, not idle --
-     and each sub-agent gets an intern (syncInterns). */
+     desk moved (rooms re-laid out) is moved with it, and each sub-agent gets
+     an intern (syncInterns). */
   Sim.prototype.sync = function (workers, placesById) {
     var seen = {};
     var self = this;
@@ -339,8 +346,7 @@ window.OfficeSim = (function () {
       if (!places) return;
       seen[w.session_id] = true;
       var tier = tierOf(w.model);
-      var busy = (w.agents || []).some(function (sub) { return sub.state === 'running'; });
-      var server = w.state === 'asleep' && busy ? 'working' : w.state;
+      var server = w.state;
       var a = self.agents[w.session_id];
       if (!a) {
         a = newAgent(w.session_id, places.seat, places.seat.lane);
@@ -404,7 +410,7 @@ window.OfficeSim = (function () {
   /* Interns on stage at the first sync start in their slot; later ones walk
      in from the doorway (or appear there under reduced motion). */
   Sim.prototype.spawnIntern = function (id, leadId, sub, places, slot) {
-    var tier = tierOf(sub.model);
+    var tier = window.OfficeCast.internTierOf(sub.model);
     var p = internPlaces(places, slot);
     var walkIn = this.primed && this.wander;
     var a = newAgent(id, walkIn ? places.door : p.seat, walkIn ? places.door.lane : p.seat.lane);
@@ -432,9 +438,11 @@ window.OfficeSim = (function () {
     return null;
   };
 
-  /* Another sleeper in the same room who is free to be talked to. */
+  /* Another worker at its desk in the same room, free to be talked to. */
   Sim.prototype.partnerFor = function (a) {
-    return this.leadWhere(a, function (b) { return b.places.room === a.places.room && b.state.pose === 'dozing' && b.server === 'asleep'; });
+    return this.leadWhere(a, function (b) {
+      return b.places.room === a.places.room && b.server === 'working' && (b.state.pose === 'typing' || b.state.pose === 'thinking');
+    });
   };
 
   /* Anyone else standing around the canteen, whatever project they came from. */

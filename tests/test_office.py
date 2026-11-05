@@ -132,28 +132,34 @@ def test_workers_carry_their_doing_and_their_sub_agents(tmp_path):
     assert w["plain"]["agents"] == [] and w["plain"]["doing"] is None and w["plain"]["agents_hidden"] == 0
 
 
-def _transcript_with_running_agent(tmp_path, sid, agent_last):
+def _transcript_with_running_agent(tmp_path, sid, agent_last, background=False):
     transcript = write_jsonl(tmp_path / "projects" / "-x" / (sid + ".jsonl"), [
         assistant_msg("m1", iso(0), content=[{"type": "tool_use", "id": "toolu_a1", "name": "Agent",
                                              "input": {"description": "look around"}}])])
     folder = transcript.with_suffix("") / "subagents"
     folder.mkdir(parents=True)
-    (folder / "agent-a1.meta.json").write_text(json.dumps({"agentType": "Explore", "description": "x",
-                                                           "toolUseId": "toolu_a1", "spawnDepth": 1}))
+    meta = {"agentType": "Explore", "description": "x", "toolUseId": "toolu_a1", "spawnDepth": 1}
+    if background:
+        meta["requestShape"] = "background"
+    (folder / "agent-a1.meta.json").write_text(json.dumps(meta))
     write_jsonl(folder / "agent-a1.jsonl", [assistant_msg("s1", agent_last, content=[
         {"type": "tool_use", "id": "t1", "name": "Grep", "input": {"pattern": "office"}}])])
     return transcript
 
 
-def test_doing_is_sent_only_while_something_is_live(tmp_path):
-    transcript = _transcript_with_running_agent(tmp_path, "t", RECENT)
+def test_a_lead_works_only_while_it_works_or_waits_on_a_foreground_agent(tmp_path):
     _state(tmp_path, "asleep-idle", seen_ago=900, transcript_path=str(write_jsonl(
         tmp_path / "projects" / "-x" / "idle.jsonl", [assistant_msg("m1", iso(0), content=[
             {"type": "tool_use", "id": "t9", "name": "Bash", "input": {"command": "ls"}}])])))
-    _state(tmp_path, "asleep-busy", seen_ago=900, transcript_path=str(transcript))
+    _state(tmp_path, "waiting", seen_ago=900, transcript_path=str(_transcript_with_running_agent(tmp_path, "f", RECENT)))
+    _state(tmp_path, "delegated", seen_ago=900,
+           transcript_path=str(_transcript_with_running_agent(tmp_path, "b", RECENT, background=True)))
     w = _workers(_office(tmp_path).payload(now=NOW))
     assert w["asleep-idle"]["state"] == "asleep" and w["asleep-idle"]["doing"] is None
-    assert w["asleep-busy"]["doing"] == {"tool": "Agent", "target": "look around"}   # an intern is running
+    assert w["waiting"]["state"] == "working"                                   # blocked on its foreground agent
+    assert w["waiting"]["doing"] == {"tool": "Agent", "target": "look around"}
+    assert w["delegated"]["state"] == "asleep" and w["delegated"]["doing"] is None   # a background agent is not its work
+    assert w["delegated"]["agents"][0]["state"] == "running"
 
 
 def test_payload_forgets_the_agents_of_sessions_that_left(tmp_path):

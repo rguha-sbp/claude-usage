@@ -45,10 +45,10 @@ else
 fi
 
 echo "== 3/5 ccusage"
-if VERSION="$(npx -y ccusage@latest --version 2>/dev/null)" && [ -n "$VERSION" ]; then
+if VERSION="$(npx -y ccusage@20.0.48 --version 2>/dev/null)" && [ -n "$VERSION" ]; then
     echo "OK: ccusage $VERSION"
 else
-    echo "WARN: 'npx -y ccusage@latest --version' did not print a version."
+    echo "WARN: 'npx -y ccusage@20.0.48 --version' did not print a version."
     echo "      The dashboard will show tokens only, with dollar figures as 'unavailable', until this works."
 fi
 

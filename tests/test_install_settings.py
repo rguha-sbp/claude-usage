@@ -195,3 +195,13 @@ def test_main_prints_summary_with_keys_and_backup_path(tmp_path, capsys):
 def test_main_returns_0_on_success(tmp_path):
     settings = tmp_path / "settings.json"
     assert main([str(settings), REPO]) == 0
+
+
+def test_a_repo_path_with_spaces_or_shell_characters_is_quoted_and_still_recognised():
+    repo = "/Users/x/my repo;$(id)"
+    merged = merge_settings({}, repo)
+    assert merged["statusLine"]["command"] == "python3 '/Users/x/my repo;$(id)/statusline/statusline.py'"
+    [entry] = merged["hooks"]["PreCompact"]
+    assert entry["hooks"][0]["command"] == "'/Users/x/my repo;$(id)/hooks/precompact-notify.sh'"
+    again = merge_settings(merged, repo)
+    assert len(again["hooks"]["PreCompact"]) == 1          # the quoted entry is replaced, not duplicated

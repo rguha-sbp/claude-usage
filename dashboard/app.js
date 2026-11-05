@@ -588,7 +588,7 @@
   function renderSkills(data) {
     var rows = data.skills;
     $('skills-hint').textContent = rows.length
-      ? 'Heaviest first \u00b7 what each load cost once it was re-read on every later call'
+      ? 'Heaviest first \u00b7 what each load cost once it was sent again with every later call'
       : 'Nothing was loaded ' + data.period_phrase;
     $('skills-note').textContent = data.skills_note;
     if (!rows.length) {
@@ -614,7 +614,9 @@
     var saving = (tip.saving_usd && tip.detail.indexOf('$') === -1)
       ? ' <em class="save">about ' + fmtUsd(tip.saving_usd) + ' saved</em>' : '';
     return '<li tabindex="-1" data-tip-id="' + esc(tip.id) + '">' + ICON.tip +
-      '<div><b>' + esc(tip.title) + '</b><span>' + esc(tip.detail) + saving + '</span></div></li>';
+      '<div><b>' + esc(tip.title) + '</b><span>' + esc(tip.detail) + saving + '</span>' +
+      '<a class="doc" href="' + esc(tip.doc) + '" target="_blank" rel="noopener noreferrer">Claude Code docs</a>' +
+      '</div></li>';
   }
 
   function renderDetail(data) {

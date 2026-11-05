@@ -2,7 +2,8 @@
 
 The statusline stamps every session's state file with `seen`, `cwd`, `model`,
 `transcript_path` and the Claude process id. This module turns those files
-into rooms (one per project) of workers that are working or asleep, each with
+into rooms (one per project) of workers that are working (or blocked on
+a foreground sub-agent that is) or asleep, each with
 what it is doing and its sub-agents; a session whose process is gone, or that
 has not been seen for a day, is left out. No database is involved.
 """
@@ -75,7 +76,7 @@ class Office:
         self.working_seconds = working_seconds
         self.gone_after_seconds = gone_after_seconds
         self.alive = alive
-        self.reader = AgentReader(claude_dir)
+        self.reader = AgentReader(claude_dir, working_seconds)
         self._streak_start: Dict[str, str] = {}   # session_id -> ISO `seen` that began the streak
 
     def _states(self) -> List[Dict[str, Any]]:
@@ -106,22 +107,26 @@ class Office:
         elif now - seen > timedelta(seconds=self.gone_after_seconds):
             self._streak_start.pop(sid, None)
             return None
-        working = now - seen <= timedelta(seconds=self.working_seconds)
-        seen_iso = seen.isoformat(timespec="seconds")
-        if working:
-            since = self._streak_start.setdefault(sid, seen_iso)
-        else:
-            self._streak_start.pop(sid, None)
-            since = seen_iso
         act: Dict[str, Any] = {"last_message": None, "doing": None}
         agents, hidden = [], 0
         if state.get("transcript_path"):
             transcript = Path(str(state["transcript_path"]))
             act = tail_activity(transcript, self.claude_dir)
             agents, hidden = self.reader.session_agents(transcript, now)
+        # a lead blocked on a foreground sub-agent is still at work; a
+        # background agent's work is not its lead's
+        working = (now - seen <= timedelta(seconds=self.working_seconds)
+                   or any(a.state == "running" and not a.background for a in agents))
+        seen_iso = seen.isoformat(timespec="seconds")
+        if working:
+            since = self._streak_start.setdefault(sid, seen_iso)
+        else:
+            self._streak_start.pop(sid, None)
+            since = seen_iso
         return {"session_id": sid, "title": state.get("title") or sid, "model": state.get("model") or "",
                 "state": "working" if working else "asleep", "since": since,
-                "last_message": None if working else act["last_message"], "doing": act["doing"] if working or any(a.state == "running" for a in agents) else None,
+                "last_message": None if working else act["last_message"],
+                "doing": act["doing"] if working else None,
                 "agents": [asdict(a) for a in agents], "agents_hidden": hidden}
 
     def payload(self, now: Optional[datetime] = None) -> Dict[str, Any]:

@@ -129,6 +129,8 @@ Each tip has: id, title, one-sentence explanation with the session's own numbers
 | repeated-reads | any file read ≥ 3 times | none |
 | thinking-heavy | thinking_tokens / output_tokens > 0.3 | none |
 
+Every tip also carries `doc`, a link to the Claude Code documentation section that backs its advice; the dashboard shows it under the tip (section 14).
+
 Month-level tips aggregate: total approximate saving from compact-earlier across sessions. (Revised 2026-09-10: the tool alerts only and never recommends or sets `autoCompactWindow`; the earlier pointer to that setting was removed.)
 
 ### 4.6 Server and page
@@ -196,7 +198,7 @@ Manual acceptance: run against the real transcripts, compare session token total
   "port": 8765,
   "threshold_tokens": 200000,
   "statusline": { "warn_tokens": 150000, "alert_tokens": 180000 },
-  "ccusage_command": ["npx", "-y", "ccusage@latest"],
+  "ccusage_command": ["npx", "-y", "ccusage@20.0.48"],
   "claude_dir": "~/.claude",
   "notifier": "/opt/homebrew/bin/terminal-notifier",
   "refresh_seconds": 60
@@ -383,9 +385,9 @@ Database-free and office-free. `AgentReader` keeps, per agent transcript, a byte
 | `tools`, `tool_mix` | count of tool_use blocks, and count per tool name; `SubagentHandback` is not counted (it is the hand-back, not work) |
 | `doing` | last tool_use as `{tool, target}`, target the first of `file_path`, `command`, `pattern`, `url`, `query`, `description`, trimmed to 80 chars; `{tool: "replying"}` when the last assistant record is text only; a record with only thinking leaves `doing` as it was |
 | `started`, `last` | first and last record `timestamp` |
-| `state` | `done` once the agent has called `SubagentHandback` (how current Claude Code sub-agents finish; checked against 39 local transcripts), or, for older transcripts, when the last assistant record is text only and nothing has been written for 10 seconds; else `stalled` when `last` is more than 15 minutes old; else `running` (a long Bash keeps an agent running though its file is quiet) |
+| `state` | `done` once the agent has called `SubagentHandback` (how current Claude Code sub-agents finish; checked against 39 local transcripts), or, for older transcripts, when the last assistant record is text only and nothing has been written for 10 seconds; else `running` while `last` is within the Office's working window (60 s), or within 15 minutes when a tool call is still pending (a long Bash keeps an agent running though its file is quiet); else `asleep` (section 14) |
 
-An agent without a meta file, or whose transcript holds no record yet, is skipped. `session_agents(transcript_path, now)` returns every running and stalled agent plus the done agents whose `last` is within 2 hours, capped at the 20 most recent done ones, and the count of done ones left out (`hidden`). Paths outside `claude_dir` are ignored, as in 12.2.
+An agent without a meta file, or whose transcript holds no record yet, is skipped. `session_agents(transcript_path, now)` returns every running and asleep agent plus the done agents whose `last` is within 2 hours, capped at the 20 most recent done ones, and the count of done ones left out (`hidden`). Paths outside `claude_dir` are ignored, as in 12.2.
 
 ### 13.3 Office payload
 
@@ -402,7 +404,7 @@ An agent without a meta file, or whose transcript holds no record yet, is skippe
 - **Pods.** `office-world.js` gives each desk a pod of 4 standing slots beside it, emitted as `places[sid].pod` (spots, so the existing routing walks interns there). Desk pitch along a room's width grows from 1.5 to 2.25 tiles for every room, so geometry does not jump when an agent spawns. Running interns take slots in spawn order; beyond 4 the lead's name plate shows `+N`.
 - **Interns.** The worker figure at 0.72 scale with a lanyard badge coloured by a hash of `agentType` (stable per type); model-tier accessories apply. A tether line joins each intern to its actual parent figure (lead or intern), dashed for background agents.
 - **Tool families.** One table in `office-cast.js`, used for leads and interns: read (Read, Grep, Glob, LS: holding a page), edit (Edit, Write, MultiEdit, NotebookEdit: typing), shell (Bash, BashOutput: terminal glyph), web (WebFetch, WebSearch: globe), delegate (Agent, Task: pointing at its child), mcp (`mcp__*`: plug), anything else or replying: thinking.
-- **Intern behaviour** (`office-sim.js`, next to the worker machine, same `arrive` steering): Arriving (doorway to slot; the lead pops), Working (pose follows the tool family, changing only when the family changes), Stalled (slumped, `?` bubble), HandingBack on done (walks to the lead's desk, a beat, the lead pops), Leaving (out of the doorway, fade). A lead with any running intern never leaves its desk, even when its own session reads asleep.
+- **Intern behaviour** (`office-sim.js`, next to the worker machine, same `arrive` steering): Arriving (doorway to slot; the lead pops), Working (pose follows the tool family, changing only when the family changes), Napping (dozing in its slot while its agent is asleep), HandingBack on done (walks to the lead's desk, a beat, the lead pops), Leaving (out of the doorway, fade). Whether a lead works is the server's call alone (section 14).
 - **Hover card.** An intern shows type, description, model, elapsed, tokens, tool count and `doing`; a lead gains its `doing` line and "N interns running". Clicking an intern opens the parent session.
 - **Reduced motion.** Interns appear in their slots, tethers drawn, no walking, glyphs static.
 
@@ -421,3 +423,15 @@ New `usage/agents.py`, `dashboard/office-figures.js` (DOM-free: `figure`, `headg
 - Static: new scripts loaded before `office.js`, DOM-free ones without `document.`; `office-rail.js` reads only keys the payload produces; no emoji glyphs.
 - Node: `office_sim_check.js` (an intern arrives, works, hands back and leaves; a lead with running interns never leaves its desk); `office_world_check.js` (pod slots overlap no desk or each other); new `office_figures_check.js` (no `NaN` / `undefined`).
 - Screenshots at 1440px and 2560px from a seeded state dir with nested sub-agents.
+
+## 14. Revision 2026-11-05: sleep, interns, tips and hardening
+
+Requested on 2026-11-05: idle sessions and sub-agents must look asleep, only leads wear the crown, workers walk to the cooler only while they work, and every tip must cite the Claude Code documentation.
+
+- **Lead state.** The server decides it alone. A lead is `working` when its statusline stamp is within `office.working_seconds`, or while it waits on a `running` sub-agent that is not a background one; otherwise `asleep`, and `doing` is `null`. The client no longer upgrades a lead because an intern is busy.
+- **Sub-agent state.** `running`, `asleep` or `done` (13.2). `stalled` is gone; a quiet agent is `asleep` and its intern naps in its slot. The rail marks it with a `z` glyph and dims the row.
+- **Intern dress.** `office-cast.js` `internTierOf(model)` is the model's tier without the crown and the halo; other accessories stay.
+- **Breaks.** A sleeper never leaves its desk. After a Thinking beat a working lead takes a break with probability 0.3 (canteen, aisle chat with a working colleague, or the cooler). A break is an errand: the moment the session stops working the walker goes home and dozes, or walks out if the session is gone.
+- **Tips.** Each tip has `doc`, a `https://code.claude.com/docs/en/...#section` link, and its text was rewritten to say only what that page says (checked 2026-11-05): compacting at a natural break (prompt-caching), subagents keeping verbose output out of the main context while their own calls still count, the cache lifetime of one hour on a subscription and five minutes on an API key, `/clear` between unrelated tasks, specific prompts needing fewer file reads, `/effort` for simpler tasks, and loaded skills staying in the conversation.
+- **Hardening.** The server answers 403 unless `Host` is `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding). The installer shell-quotes the repo path in the statusline and hook commands and still recognises its own hook when quoted. `ccusage` is pinned to `20.0.48` instead of `@latest`.
+- **CI.** `.github/workflows/tests.yml` runs pytest (which drives the node checks) on macOS with Python 3.9 and 3.13.

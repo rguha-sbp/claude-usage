@@ -1,5 +1,5 @@
 /* The figures (spec Sec 12.3, 13.4): a lead per session and an intern per
-   running sub-agent, as SVG strings with their origin between the feet.
+   live sub-agent, as SVG strings with their origin between the feet.
    Pure: no DOM, so tests/office_figures_check.js drives it under node.
    office.js places and poses them; the pose and tool family are classes
    on the root, and office.css decides what each class shows. */
@@ -12,7 +12,7 @@ window.OfficeFigures = (function () {
   var INTERN_SCALE = 0.72;
 
   /* One glyph per tool family, floating over the head; office.css shows the
-     one matching the figure's `tool-<family>` class (or `stalled`). */
+     one matching the figure's `tool-<family>` class. */
   var GLYPHS = '<g class="glyph" transform="translate(0 -46)">' +
     '<g class="g-read"><rect x="-5" y="-6" width="10" height="12" rx="1"/><path d="M-3 -2 H3 M-3 1 H3 M-3 4 H1"/></g>' +
     '<g class="g-edit"><path d="M-5 5 L3 -3 L5 -1 L-3 7 Z M-5 5 L-6 8 L-3 7"/></g>' +
@@ -20,7 +20,6 @@ window.OfficeFigures = (function () {
     '<g class="g-web"><circle r="6"/><path d="M-6 0 H6 M0 -6 Q4 0 0 6 Q-4 0 0 -6"/></g>' +
     '<g class="g-delegate"><circle cx="-2" cy="-1" r="3"/><circle cx="4" cy="3" r="2"/><path d="M0 1 L3 2.5"/></g>' +
     '<g class="g-mcp"><path d="M-3 -6 V-2 M3 -6 V-2 M-5 -2 H5 V1 Q5 5 0 5 Q-5 5 -5 1 Z M0 5 V8"/></g>' +
-    '<g class="g-stalled"><circle r="6.5"/><text x="0" y="3.5" text-anchor="middle">?</text></g>' +
     '</g>';
 
   var esc = window.UsageFormat.esc;
@@ -48,9 +47,9 @@ window.OfficeFigures = (function () {
     return look.glasses ? glasses() : '';
   }
 
-  /* The shared body. `o`: {cls, session, agent, model, look, badge}. */
+  /* The shared body. `o`: {cls, session, agent, model, tier, look, badge}. */
   function body(o) {
-    var tier = Cast.tierOf(o.model);
+    var tier = o.tier;
     var coat = tier.key === 'muse' || o.look.coat;
     return '<g class="worker tier-' + tier.key + o.cls + '" data-session="' + esc(o.session) + '" data-agent="' +
       esc(o.agent) + '" tabindex="0" role="button" ' +
@@ -80,12 +79,13 @@ window.OfficeFigures = (function () {
   }
 
   function lead(worker, look) {
-    return body({ cls: '', session: worker.session_id, agent: worker.session_id, model: worker.model, look: look });
+    return body({ cls: '', session: worker.session_id, agent: worker.session_id, model: worker.model,
+                  tier: Cast.tierOf(worker.model), look: look });
   }
 
   function intern(sub, look, sessionId) {
     return body({ cls: ' intern', session: sessionId, agent: sessionId + '/' + sub.agent_id, model: sub.model,
-                  look: look, badge: Cast.badgeOf(sub.type) });
+                  tier: Cast.internTierOf(sub.model), look: look, badge: Cast.badgeOf(sub.type) });
   }
 
   return { lead: lead, intern: intern, INTERN_SCALE: INTERN_SCALE };

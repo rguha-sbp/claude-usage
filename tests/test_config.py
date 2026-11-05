@@ -12,7 +12,7 @@ def test_defaults_when_no_file(tmp_path):
     assert cfg.threshold_tokens == 200000
     assert cfg.warn_tokens == 150000
     assert cfg.alert_tokens == 180000
-    assert cfg.ccusage_command == ["npx", "-y", "ccusage@latest"]
+    assert cfg.ccusage_command == ["npx", "-y", "ccusage@20.0.48"]   # pinned: never run an unreviewed release
     assert cfg.claude_dir == Path.home() / ".claude"
     assert cfg.state_dir == Path.home() / ".claude" / "usage-state"
     assert cfg.refresh_seconds == 60

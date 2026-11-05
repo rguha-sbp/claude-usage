@@ -29,6 +29,13 @@ window.OfficeCast = (function () {
     return CORE;
   }
 
+  /* An intern dresses by its model too, but the crown and the aura belong
+     to leads: whatever runs a sub-agent, it wears its lanyard instead. */
+  function internTierOf(model) {
+    var tier = tierOf(model);
+    return Object.assign({}, tier, { crown: tier.crown === 'crown' ? null : tier.crown, aura: false });
+  }
+
   /* The scene is lit by the viewer's own clock. `light` scales the room
      lightness, `lamps` turns the desk lamps on, `stars` fills the sky. */
   var SKIES = [
@@ -79,6 +86,6 @@ window.OfficeCast = (function () {
                 'hsl(280 50% 56%)', 'hsl(350 65% 52%)', 'hsl(48 85% 45%)'];
   function badgeOf(type) { return BADGES[hash(String(type || '')) % BADGES.length]; }
 
-  return { TIERS: TIERS, tierOf: tierOf, skyOf: skyOf, SKIES: SKIES,
+  return { TIERS: TIERS, tierOf: tierOf, internTierOf: internTierOf, skyOf: skyOf, SKIES: SKIES,
            hash: hash, FAMILIES: FAMILIES, familyOf: familyOf, badgeOf: badgeOf };
 })();

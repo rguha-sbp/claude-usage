@@ -76,3 +76,27 @@ def test_server_returns_500_json_on_error(tmp_path, monkeypatch):
             assert json.loads(e.read())["error"] == "kaput"
     finally:
         srv.stop()
+
+
+def test_server_refuses_a_foreign_host_header(tmp_path):
+    """DNS rebinding: a page on evil.example rebound to 127.0.0.1 must not
+    read session titles and messages through the browser."""
+    cfgp = tmp_path / "config.json"
+    cfgp.write_text(json.dumps({"claude_dir": str(tmp_path), "db_path": str(tmp_path / "u.db"),
+                                "ccusage_command": ["ccusage"], "refresh_seconds": 3600}))
+    cfg = load_config(cfgp)
+    srv = UsageServer(cfg, Store(cfg.db_path), runner=lambda cmd: (1, "", "none"), port=0)
+    srv.start()
+    try:
+        def status(host):
+            conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=5)
+            conn.request("GET", "/api/office", headers={"Host": host})
+            code = conn.getresponse().status
+            conn.close()
+            return code
+        assert status("evil.example:%d" % srv.port) == 403
+        assert status("127.0.0.1.evil.example:%d" % srv.port) == 403
+        assert status("127.0.0.1:%d" % srv.port) == 200
+        assert status("localhost:%d" % srv.port) == 200
+    finally:
+        srv.stop()

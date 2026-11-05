@@ -87,8 +87,18 @@ class _Handler(BaseHTTPRequestHandler):
             return None
         return candidate
 
+    def _host_is_local(self) -> bool:
+        """Only this machine's own names reach the dashboard. A page on any
+        other host name that rebinds its DNS to 127.0.0.1 (DNS rebinding)
+        must not read session titles and messages through the browser."""
+        port = self.app.port
+        return self.headers.get("Host", "") in ("127.0.0.1:%d" % port, "localhost:%d" % port)
+
     def do_GET(self):  # noqa: N802 (stdlib method name)
         try:
+            if not self._host_is_local():
+                self._write_json(403, {"error": "the dashboard answers only to 127.0.0.1 and localhost"})
+                return
             url = urlparse(self.path)
             if url.path == "/api/office":
                 payload = self.app.office.payload()

@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .parser import _USAGE_FIELDS, _as_dict, _as_list, _as_str, _safe_parse_ts, _usage_from
 
-STALLED_AFTER = timedelta(minutes=15)
+TOOL_PATIENCE = timedelta(minutes=15)   # a tool call still waiting on its result counts as work this long
 QUIET_REPLY = timedelta(seconds=10)      # a legacy text-only reply counts as done after this
 DONE_WINDOW = timedelta(hours=2)
 DONE_CAP = 20
@@ -58,7 +58,7 @@ class SubAgent:
     doing: Optional[Dict[str, str]]
     started: str
     last: str
-    state: str                     # "running" | "done" | "stalled"
+    state: str                     # "running" | "asleep" | "done"
 
 
 @dataclass
@@ -72,6 +72,7 @@ class _Tally:
     doing: Optional[Dict[str, str]] = None
     handed_back: bool = False
     replied_last: bool = False
+    awaiting: bool = False                         # the last tool call has no result yet
     started: Optional[str] = None
     last: Optional[str] = None
 
@@ -86,6 +87,8 @@ def _fold(t: _Tally, rec: Dict[str, Any]) -> None:
         t.started = t.started or ts
         t.last = ts
     message = _as_dict(rec.get("message"))
+    if rec.get("type") == "user":
+        t.awaiting = False
     if rec.get("type") != "assistant" or not message:
         return
     t.model = _as_str(message.get("model")) or t.model
@@ -110,6 +113,7 @@ def _fold(t: _Tally, rec: Dict[str, Any]) -> None:
     if doing is not None:
         t.doing = doing
         t.replied_last = doing["tool"] == "replying"
+        t.awaiting = not t.replied_last
 
 
 def _advance(t: _Tally, path: Path) -> _Tally:
@@ -148,14 +152,18 @@ def _age(ts: Optional[str], now: datetime) -> timedelta:
     return now - when if when is not None else timedelta.max
 
 
-def _state(t: _Tally, now: datetime) -> str:
+def _state(t: _Tally, now: datetime, working: timedelta) -> str:
+    """Done once handed back; running while it wrote something within
+    `working` (the leads' own window) or still waits on a tool's result;
+    asleep otherwise, like a quiet lead."""
     quiet = _age(t.last, now)
     if t.handed_back or (t.replied_last and quiet >= QUIET_REPLY):
         return "done"
-    return "stalled" if quiet > STALLED_AFTER else "running"
+    return "running" if quiet <= working or (t.awaiting and quiet <= TOOL_PATIENCE) else "asleep"
 
 
-def _agent(agent_id: str, meta: Dict[str, Any], t: _Tally, owner: Dict[str, str], now: datetime) -> SubAgent:
+def _agent(agent_id: str, meta: Dict[str, Any], t: _Tally, owner: Dict[str, str], now: datetime,
+           working: timedelta) -> SubAgent:
     depth = meta.get("spawnDepth")
     return SubAgent(agent_id=agent_id, type=_as_str(meta.get("agentType")) or "agent",
                     description=_as_str(meta.get("description")) or "",
@@ -163,14 +171,15 @@ def _agent(agent_id: str, meta: Dict[str, Any], t: _Tally, owner: Dict[str, str]
                     depth=depth if isinstance(depth, int) and depth > 0 else 1,
                     parent=owner.get(_as_str(meta.get("toolUseId")) or ""),
                     model=t.model, tokens=t.tokens, tools=sum(t.tool_mix.values()), tool_mix=dict(t.tool_mix),
-                    doing=t.doing, started=t.started or "", last=t.last or "", state=_state(t, now))
+                    doing=t.doing, started=t.started or "", last=t.last or "", state=_state(t, now, working))
 
 
 class AgentReader:
     """One per Office; remembers a `_Tally` per agent transcript between calls."""
 
-    def __init__(self, claude_dir: Path) -> None:
+    def __init__(self, claude_dir: Path, working_seconds: int = 60) -> None:
         self.claude_dir = claude_dir
+        self.working = timedelta(seconds=working_seconds)
         self._tallies: Dict[Path, _Tally] = {}
 
     def session_dir(self, transcript: Path) -> Optional[Path]:
@@ -189,7 +198,7 @@ class AgentReader:
         self._tallies = {p: t for p, t in self._tallies.items() if p.parent.parent in session_dirs}
 
     def session_agents(self, transcript_path: Path, now: datetime) -> Tuple[List[SubAgent], int]:
-        """Running and stalled agents plus the done ones from the last
+        """Running and asleep agents plus the done ones from the last
         DONE_WINDOW (the DONE_CAP most recent), ordered by start; and how
         many done ones were left out."""
         session_dir = self.session_dir(transcript_path)
@@ -211,7 +220,7 @@ class AgentReader:
             if tally.started is not None:
                 found.append((agent_id, meta, tally))
         owner = {tid: aid for aid, _, t in found for tid in t.spawned}
-        agents = sorted((_agent(aid, meta, t, owner, now) for aid, meta, t in found), key=lambda a: a.started)
+        agents = sorted((_agent(aid, meta, t, owner, now, self.working) for aid, meta, t in found), key=lambda a: a.started)
         done = [a for a in agents if a.state == "done"]
         recent = [a for a in done if _age(a.last, now) <= DONE_WINDOW][-DONE_CAP:]
         keep = {id(a) for a in recent}

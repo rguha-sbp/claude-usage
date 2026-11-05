@@ -176,9 +176,9 @@
 /* interns */
 .office-scene .worker.intern .badge { fill: var(--badge); }
 .office-scene .worker.intern .lanyard { stroke: var(--badge); stroke-width: 1.2; }
-.office-scene .worker.standing .legs, .office-scene .worker.stalled .legs, .office-scene .worker.handing .legs { display: block; }
+.office-scene .worker.standing .legs, .office-scene .worker.intern.dozing .legs, .office-scene .worker.handing .legs { display: block; }
 .office-scene .worker.standing .body, .office-scene .worker.handing .body { transform: translateY(-9px); }
-.office-scene .worker.stalled .body { transform: translateY(-6px) rotate(9deg); }
+.office-scene .worker.intern.dozing .body { transform: translateY(-6px) rotate(9deg); }   /* nods off on its feet */
 .office-scene .worker.handing .arm.right { transform: translate(-4px, -10px) rotate(-95deg); }
 .office-scene .worker.standing.tool-edit .arm.left { animation: type 480ms ease-in-out infinite alternate; }
 .office-scene .worker.standing.tool-edit .arm.right { animation: type 480ms ease-in-out 240ms infinite alternate; }
@@ -195,8 +195,7 @@
 .office-scene .glyph rect, .office-scene .glyph circle, .office-scene .glyph path { fill: var(--glass-strong); stroke: var(--ink-2); stroke-width: 1.1; }
 .office-scene .glyph text { font-size: 9px; font-weight: 700; fill: var(--ink-2); }
 .office-scene .worker.tool-read .g-read, .office-scene .worker.tool-edit .g-edit, .office-scene .worker.tool-shell .g-shell,
-.office-scene .worker.tool-web .g-web, .office-scene .worker.tool-delegate .g-delegate, .office-scene .worker.tool-mcp .g-mcp,
-.office-scene .worker.stalled .g-stalled { display: block; }
+.office-scene .worker.tool-web .g-web, .office-scene .worker.tool-delegate .g-delegate, .office-scene .worker.tool-mcp .g-mcp { display: block; }
 
 /* the Agents rail */
 .office-rail { border-left: 1px solid var(--hairline); padding-left: 14px; max-height: 78vh; overflow: auto; }
@@ -214,7 +213,7 @@
                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-row .mix { display: none; font-size: 11px; color: var(--ink-3); }
 .rail-row:hover .mix, .rail-row:focus-visible .mix { display: block; }
-.rail-row.state-done, .rail-row.state-stalled { opacity: .55; }
+.rail-row.state-done, .rail-row.state-asleep { opacity: .55; }
 .rail-row .sg { width: 12px; height: 12px; flex: none; fill: none; stroke: var(--ink-2); stroke-width: 1.3; }
 .rail-row.state-running .sg path { fill: var(--tint); stroke: none; }
 .rail-row .bg { width: 12px; height: 12px; fill: var(--ink-3); }

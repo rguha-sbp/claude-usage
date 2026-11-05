@@ -258,7 +258,7 @@ def test_office_states_have_static_poses_under_reduced_motion():
     css = (DASH / "office.css").read_text()
     assert "prefers-reduced-motion" in css
     for cls in (".worker.typing", ".worker.dozing", ".worker.walking", ".worker.thinking",
-                ".worker.lounging", ".worker.standing", ".worker.stalled", ".worker.handing"):
+                ".worker.lounging", ".worker.standing", ".worker.intern.dozing", ".worker.handing"):
         assert cls in css, cls
 
 

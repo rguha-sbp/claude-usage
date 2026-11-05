@@ -130,7 +130,7 @@
   }
 
   // ---------------------------------------------------------- frame loop
-  var AT_DESK = { typing: 1, thinking: 1, dozing: 1, standing: 1, stalled: 1 };
+  var AT_DESK = { typing: 1, thinking: 1, dozing: 1, standing: 1 };
 
   /* What to draw and say for a sim agent, a lead or an intern. */
   function figureFor(agent) {
@@ -234,7 +234,7 @@
 
   var DOING = { typing: 'typing away', thinking: 'thinking', dozing: 'dozing at the desk', walking: 'on the move',
                 drinking: 'at the water cooler', chatting: 'chatting in the aisle', lounging: 'out at the canteen',
-                standing: 'at work beside the desk', stalled: 'stuck', handing: 'handing back' };
+                standing: 'at work beside the desk', handing: 'handing back' };
 
   function internCard(info) {
     var sub = info.sub;

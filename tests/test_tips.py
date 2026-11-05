@@ -187,3 +187,22 @@ def test_month_skills_tip_names_the_heaviest_skill():
     skills[0]["share"] = 0.02
     assert "month-skills" not in {t.id for t in month_tips([], 200000, cost_available=False, skills=skills)}
     assert "month-skills" not in {t.id for t in month_tips([], 200000, cost_available=False)}
+
+
+def test_every_tip_links_the_claude_code_doc_behind_it():
+    """Tips give advice the docs back up, so each one carries the page (and
+    section) to read; a tip without one is a bug."""
+    everything = base(calls=400, compactions=0, calls_over_threshold=3, tokens_over_threshold=100000,
+                      cost=10.0, total_tokens=1000000, tool_result_bytes=600, content_bytes=1000,
+                      cold_restarts=2, repeated_reads={"/a.py": 3}, thinking_tokens=400, output_tokens=1000,
+                      input_tokens=100_000, skills_carried_tokens=50_000,
+                      skills=[{"name": "big-skill"}])
+    session = session_tips(everything, 200000)
+    skills = [{"name": "big-skill", "loads": 1, "sessions": 1, "injected_tokens": 1, "carried_tokens": 1,
+               "share": 0.5}]
+    month = month_tips([everything], 200000, cost_available=True, skills=skills)
+    assert {t.id for t in session} == {"compact-earlier", "delegate-exploration", "cold-cache", "split-session",
+                                       "repeated-reads", "thinking-heavy", "skill-heavy"}
+    assert {t.id for t in month} == {"month-skills", "month-compact", "month-sessions", "month-delegate"}
+    for tip in session + month:
+        assert tip.doc.startswith("https://code.claude.com/docs/en/") and "#" in tip.doc, tip.id

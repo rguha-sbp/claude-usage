@@ -72,16 +72,18 @@ or `?period=2026-09-14`), so a day view can be bookmarked and reloaded.
   small worker at a desk, in an isometric campus: one room per project,
   each with a water cooler, a plant and a doorway, and out in front a
   plaza with a canteen, a notice board and a server room. A worker types
-  while its session is busy, leaning back to think now and then, and
-  slumps over the desk with z's once the session has been quiet for a
-  minute. Sleepers get up occasionally: a drink at the cooler, a chat in
-  the aisle with another sleeper from the same room, or a walk out to the
-  canteen — the one place where workers from different projects stand
-  together and talk. A session called back to work walks home first. When
-  the session's process exits the worker walks out through the door and
-  fades. Each worker's hair, glasses and coat come from its session id and
+  while its session is busy (or waits on a foreground sub-agent), leaning
+  back to think now and then, and slumps over the desk with z's once the
+  session has been quiet for a minute. Sleepers stay asleep at their desks.
+  A working lead sometimes takes a short break between thoughts: a drink
+  at the cooler, a chat in the aisle with another worker from the same
+  room, or a walk out to the canteen — the one place where workers from
+  different projects stand together and talk. A session that falls asleep
+  mid-break walks home and dozes. When the session's process exits the
+  worker walks out through the door and fades. Each worker's hair, glasses and coat come from its session id and
   its shirt from its model, so the same session always looks the same.
-  The model decides the rest: Opus wears a crown and keeps a trophy on a
+  The model decides the rest (only leads, never sub-agent interns, get the
+  crown and the halo): Opus wears a crown and keeps a trophy on a
   gold-trimmed desk, Fable a monocle and a silk coat beside an orchid,
   Sonnet is an ordinary worker and Haiku is smaller, quicker and wears
   headphones (`dashboard/office-cast.js`). The notice board carries the
@@ -177,7 +179,7 @@ prerequisite does not stop the rest:
 2. Installs `terminal-notifier` with Homebrew if it is not already at
    `/opt/homebrew/bin/terminal-notifier` (prints manual install
    instructions if Homebrew itself is missing).
-3. Checks that `npx -y ccusage@latest --version` prints a version; if not,
+3. Checks that `npx -y ccusage@20.0.48 --version` prints a version; if not,
    this is a warning, not a failure — the dashboard still works, showing
    tokens instead of dollars.
 4. Creates `~/.claude/usage-state/`, where the statusline keeps its
@@ -290,7 +292,7 @@ bytes, calls):
   allowed, and that Focus/Do Not Disturb is not silencing it. Re-run the
   manual test command above.
 - **Costs show "unavailable"** — `ccusage` could not run. Check that
-  `npx -y ccusage@latest --version` works from a terminal (needs Node);
+  `npx -y ccusage@20.0.48 --version` works from a terminal (needs Node);
   check the server logs for the last error. Tokens are always shown even
   when dollars are not.
 - **The dashboard looks stale** — the background refresh runs every 60
@@ -319,7 +321,11 @@ handler joins on the notice board's numbers for today (`board_stats` in
 usage/summary.py), the one part of that payload that comes from the
 database. `/api/summary` takes
 `?period=YYYY-MM` or `?period=YYYY-MM-DD` (`?month=` still works) and
-answers 400 for anything else. The page is fluid up to 1680px wide.
+answers 400 for anything else. The server listens on 127.0.0.1 only and
+answers 403 to any request whose `Host` header is not `127.0.0.1:<port>`
+or `localhost:<port>`, so a web page that rebinds its own DNS name to
+127.0.0.1 cannot read your session titles and messages. The page is fluid
+up to 1680px wide.
 `statusline/statusline.py` is invoked by Claude Code itself after every
 assistant message, reading the same session's live context size from stdin;
 it never parses transcripts or calls the network, so it stays fast.
@@ -338,3 +344,8 @@ hook rather than being invoked by this project.
 or, with uv (also installs pytest into an isolated environment):
 
     uv run --group dev pytest -q
+
+The node checks for the Office (`tests/office_*_check.js`) run as part of
+pytest when `node` is on the PATH. GitHub Actions
+(`.github/workflows/tests.yml`) runs the whole suite on macOS with Python
+3.9 and 3.13 on every push to `main` and every pull request.

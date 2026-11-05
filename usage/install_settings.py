@@ -9,6 +9,7 @@ refuses to touch anything if the existing file is not valid JSON.
 """
 import json
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -28,24 +29,27 @@ _CHANGED_KEYS = ("statusLine", "hooks.PreCompact", "cleanupPeriodDays")
 
 
 def _statusline_entry(repo: str) -> Dict[str, Any]:
-    return {"type": "command", "command": "python3 %s/statusline/statusline.py" % repo, "padding": 0}
+    # Claude Code runs these through a shell: quote the path so spaces or
+    # shell characters in the repo's location stay part of the path.
+    return {"type": "command", "command": "python3 " + shlex.quote(repo + "/statusline/statusline.py"), "padding": 0}
 
 
 def _precompact_entry(repo: str) -> Dict[str, Any]:
     return {
         "matcher": "auto",
-        "hooks": [{"type": "command", "command": "%s/hooks/%s" % (repo, HOOK_NAME), "timeout": 10}],
+        "hooks": [{"type": "command", "command": shlex.quote("%s/hooks/%s" % (repo, HOOK_NAME)), "timeout": 10}],
     }
 
 
 def _is_our_precompact_entry(entry: Any) -> bool:
     """True if `entry` is a prior PreCompact registration of our own hook script,
-    identified by any of its hook commands ending in HOOK_NAME (any repo path)."""
+    identified by any of its hook commands ending in HOOK_NAME (any repo path,
+    quoted or not)."""
     if not isinstance(entry, dict):
         return False
     for hook in entry.get("hooks") or []:
         command = hook.get("command") if isinstance(hook, dict) else None
-        if isinstance(command, str) and command.endswith(HOOK_NAME):
+        if isinstance(command, str) and command.rstrip("'").endswith(HOOK_NAME):
             return True
     return False
 

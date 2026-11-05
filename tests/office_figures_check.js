@@ -23,9 +23,12 @@ expect(intern.indexOf('data-agent="s1/a1"') !== -1 && intern.indexOf('data-sessi
 expect(intern.indexOf(' intern') !== -1 && intern.indexOf('class="badge"') !== -1, 'an intern wears a lanyard badge');
 expect(intern.indexOf(window.OfficeCast.badgeOf('Explore')) !== -1, 'the badge is coloured by agent type');
 expect(intern.indexOf('class="cans"') !== -1, 'a Haiku intern wears headphones');
-['g-read', 'g-edit', 'g-shell', 'g-web', 'g-delegate', 'g-mcp', 'g-stalled'].forEach(function (g) {
+['g-read', 'g-edit', 'g-shell', 'g-web', 'g-delegate', 'g-mcp'].forEach(function (g) {
   expect(lead.indexOf(g) !== -1 && intern.indexOf(g) !== -1, 'both figures carry glyph ' + g);
 });
+var opusIntern = F.intern({ agent_id: 'a2', type: 'Plan', model: 'claude-opus-5-5', background: false }, look, 's1');
+expect(opusIntern.indexOf('class="crown"') === -1 && opusIntern.indexOf('class="aura"') === -1, 'only leads wear the crown and aura');
+expect(lead.indexOf('class="aura"') !== -1, 'an Opus lead keeps its aura');
 expect(F.INTERN_SCALE > 0.5 && F.INTERN_SCALE < 0.9, 'interns are smaller');
 var evil = F.intern({ agent_id: 'a"1', type: 'E<b>', model: 'x', background: false }, look, 's"1');
 expect(evil.indexOf('data-agent="s&quot;1/a&quot;1"') !== -1 && evil.indexOf('a"1') === -1, 'an agent id with a quote is escaped in data-agent');

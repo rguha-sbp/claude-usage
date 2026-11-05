@@ -106,12 +106,17 @@ expect(noStars.svg.indexOf('star') === -1, 'no stars at midday');
 require('../dashboard/office-sim.js');
 var sim = new window.OfficeSim.Sim({ wander: true });
 var live = [];
-data.rooms.forEach(function (room) { room.workers.forEach(function (w) { live.push(w); }); });
+data.rooms.forEach(function (room) {          // only working leads take breaks
+  room.workers.forEach(function (w) { live.push(Object.assign({}, w, { state: 'working' })); });
+});
 sim.sync(live, world.places);
 var reachedCanteen = false, strayed = null, dt = 1 / 60;
 var seats = {};
 live.forEach(function (w) { seats[w.session_id] = world.places[w.session_id].seat; });
 for (var t = 0; t < 300 * 60; t++) {
+  if (t === 240 * 60) {                        // everyone falls asleep: breaks end at the desk
+    sim.sync(live.map(function (w) { return Object.assign({}, w, { state: 'asleep' }); }), world.places);
+  }
   sim.tick(dt);
   sim.list().forEach(function (ag) {
     if (ag.state.pose === 'lounging') {

@@ -10,7 +10,7 @@ window.OfficeRail = (function () {
   var STATE_GLYPH = {
     running: '<svg viewBox="0 0 12 12" class="sg"><circle cx="6" cy="6" r="4.5"/><path d="M6 1.5 A4.5 4.5 0 0 1 6 10.5 Z"/></svg>',
     done: '<svg viewBox="0 0 12 12" class="sg"><path d="M2.5 6.5 L5 9 L9.5 3.5"/></svg>',
-    stalled: '<svg viewBox="0 0 12 12" class="sg"><circle cx="6" cy="6" r="4.5"/><path d="M4.6 4.6 Q6 2.6 7.4 4.2 Q7.8 5.4 6 6.4 V7.4 M6 9 V9.2"/></svg>'
+    asleep: '<svg viewBox="0 0 12 12" class="sg"><path d="M3 3.5 H8 L3 8.5 H8"/></svg>'
   };
   var BACKGROUND = '<svg viewBox="0 0 12 12" class="bg" aria-label="background"><circle cx="2.5" cy="6" r="1.2"/>' +
     '<circle cx="6" cy="6" r="1.2"/><circle cx="9.5" cy="6" r="1.2"/></svg>';

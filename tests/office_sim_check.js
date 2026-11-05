@@ -1,5 +1,5 @@
 // Drives dashboard/office-sim.js without a browser: fake `window`, seat
-// sleepers and workers in two rooms plus a session that goes away, then tick
+// workers and sleepers in two rooms plus a session that goes away, then tick
 // 240 simulated seconds and report what happened. Exits non-zero on any
 // broken expectation. Run by tests/test_office_sim.py.
 'use strict';
@@ -26,20 +26,27 @@ function places(seat, room) {
 var P = { a: places({ x: 1, y: 1 }, 0), b: places({ x: 2.5, y: 1 }, 0), c: places({ x: 1, y: 2.5 }, 0),
           d: places({ x: 1, y: 1 }, 1), e: places({ x: 2.5, y: 1 }, 1) };
 var workers = [
-  { session_id: 'a', state: 'asleep', model: 'Opus 5' }, { session_id: 'b', state: 'asleep', model: 'Sonnet 5' },
+  { session_id: 'a', state: 'asleep', model: 'Opus 5' }, { session_id: 'b', state: 'working', model: 'Sonnet 5' },
   { session_id: 'c', state: 'working', model: 'Sonnet 5' }, { session_id: 'd', state: 'asleep', model: 'Fable 5.1' },
-  { session_id: 'e', state: 'asleep', model: 'Haiku 4.5' }];
+  { session_id: 'e', state: 'working', model: 'Haiku 4.5' }];
+function live() { return workers.filter(function (w) { return w.session_id !== 'd'; }); }
 
 var sim = new Sim({ wander: true });
 sim.sync(workers, P);
 var seen = { a: {}, b: {}, c: {}, d: {}, e: {} }, top = { a: 0, b: 0, c: 0, d: 0, e: 0 };
 var maxSpeed = 0, t = 0, dt = 1 / 60;
 var minDist = Infinity, doorPass = Infinity, loungeBubble = false, crossProject = false, spotDist = Infinity;
+var sleeperWalked = false, bAwayAtSleep = null;
 for (var i = 0; i < 240 * 60; i++) {
   t += dt;
-  if (Math.abs(t - 60) < dt / 2) sim.sync(workers.filter(function (w) { return w.session_id !== 'd'; }), P);  // d's session ends
-  if (Math.abs(t - 150) < dt / 2) { workers[0].state = 'working'; sim.sync(workers.filter(function (w) { return w.session_id !== 'd'; }), P); }
+  if (Math.abs(t - 60) < dt / 2) sim.sync(live(), P);                                   // d's session ends
+  if (Math.abs(t - 150) < dt / 2) { workers[0].state = 'working'; sim.sync(live(), P); }  // a wakes up
+  if (Math.abs(t - 200) < dt / 2) {                                                      // b falls asleep
+    bAwayAtSleep = sim.agents.b.state.pose !== 'typing' && sim.agents.b.state.pose !== 'thinking';
+    workers[1].state = 'asleep'; sim.sync(live(), P);
+  }
   sim.tick(dt);
+  if (t < 150 && sim.agents.a.state.pose !== 'dozing') sleeperWalked = true;
   var lounging = [];
   sim.list().forEach(function (ag) {
     seen[ag.id][ag.state.pose] = (seen[ag.id][ag.state.pose] || 0) + 1;
@@ -67,14 +74,15 @@ var out = { seen: seen, maxSpeed: +maxSpeed.toFixed(2), top: top,
             chatMinDist: minDist === Infinity ? null : +minDist.toFixed(2),
             canteenSpotDist: spotDist === Infinity ? null : +spotDist.toFixed(2),
             crossProject: crossProject, loungeBubble: loungeBubble,
-            aBackAtSeat: (function () { var a = sim.agents.a; return a ? Math.hypot(a.pos.x - 1, a.pos.y - 1) < 0.2 : null; })(),
-            aPose: sim.agents.a ? sim.agents.a.state.pose : null };
+            bAtSeat: Math.hypot(sim.agents.b.pos.x - 2.5, sim.agents.b.pos.y - 1) < 0.2, bAwayAtSleep: bAwayAtSleep,
+            aPose: sim.agents.a.state.pose, bPose: sim.agents.b.state.pose };
 
 function expect(cond, msg) { if (!cond) { console.error('FAIL: ' + msg); process.exitCode = 1; } }
 expect(seen.c.typing > 0 && seen.c.thinking > 0, 'a working session types and thinks');
-expect(seen.c.walking === undefined, 'a working session never leaves its desk');
-expect((seen.a.walking || 0) > 0 && (seen.b.walking || 0) > 0, 'sleepers get up for errands');
-expect((seen.a.chatting || 0) + (seen.a.drinking || 0) + (seen.a.lounging || 0) > 0, 'an errand is a chat, a drink or the canteen');
+expect(!sleeperWalked, 'a sleeper stays asleep at its desk');
+expect((seen.b.walking || 0) > 0 && (seen.c.walking || 0) > 0, 'workers take breaks between thoughts');
+expect(['b', 'c', 'e'].some(function (id) { return (seen[id].chatting || 0) + (seen[id].drinking || 0) > 0; }),
+       'a break can be a chat or a drink at the cooler');
 expect((seen.b.lounging || 0) + (seen.e.lounging || 0) > 0, 'somebody walks out to the canteen');
 expect(out.canteenSpotDist !== null && out.canteenSpotDist < 0.2, 'a lounger stands on a canteen spot');
 expect(out.crossProject, 'workers from different projects meet at the canteen');
@@ -82,8 +90,22 @@ expect(out.loungeBubble, 'the canteen has conversation');
 expect(out.agentsLeft.indexOf('d') === -1 && (seen.d.walking || 0) > 0, 'a gone session walks out and is removed');
 expect(maxSpeed <= 2.35, 'steering never exceeds the fastest tier');
 expect(top.e > top.b + 0.15, 'the swift tier really is quicker');
-expect(out.aPose === 'typing' || out.aPose === 'thinking' || out.aPose === 'walking', 'a sleeper called back to work heads home and types (pose: ' + out.aPose + ')');
+expect(out.aPose !== 'dozing', 'a sleeper called back to work wakes up (pose: ' + out.aPose + ')');
+expect(out.bPose === 'dozing' && out.bAtSeat, 'a worker that falls asleep walks home and dozes (pose: ' + out.bPose + ')');
 if (out.chatMinDist !== null) expect(out.chatMinDist < 1.0, 'chat partners stand together');
+
+// A worker whose session falls asleep in the middle of a break walks home and dozes.
+var nap = new Sim({ wander: true });
+var napper = [{ session_id: 'b', state: 'working', model: 'Sonnet 5' }];
+nap.sync(napper, { b: P.b });
+var away = false, k;
+for (k = 0; k < 600 * 60 && !away; k++) { nap.tick(dt); away = nap.agents.b.state.pose !== 'typing' && nap.agents.b.state.pose !== 'thinking'; }
+napper[0].state = 'asleep';
+nap.sync(napper, { b: P.b });
+for (k = 0; k < 30 * 60; k++) nap.tick(dt);
+var nb = nap.agents.b;
+expect(away && nb.state.pose === 'dozing' && Math.hypot(nb.pos.x - 2.5, nb.pos.y - 1) < 0.2,
+       'a break ends when the session falls asleep: home to the desk, then dozing');
 
 // --- interns (spec Sec 13.4) ---------------------------------------------
 function podPlaces(seat) {
@@ -95,12 +117,16 @@ function podPlaces(seat) {
 function outsideToRoom(x, y) { return { x: x, y: y, lane: { axis: 'y', at: AISLE }, via: [DOOR, { x: x, y: AISLE }] }; }
 function agentRec(id, state, parent) { return { agent_id: id, type: 'Explore', model: 'Haiku 4.5', state: state, parent: parent || null, background: false }; }
 
+var lone = new Sim({ wander: true });                   // the server alone decides whether a lead works
+lone.sync([{ session_id: 'Q', state: 'asleep', model: 'Opus 5', agents: [agentRec('bg', 'running')] }], { Q: podPlaces({ x: 1, y: 1 }) });
+expect(lone.agents.Q.server === 'asleep', 'a running sub-agent does not wake a lead the server calls asleep');
+
 var isim = new Sim({ wander: true });
 var IP = { L: podPlaces({ x: 1, y: 1 }) };
-var lead = { session_id: 'L', state: 'asleep', model: 'Opus 5', agents: [agentRec('pre', 'running')] };
+var lead = { session_id: 'L', state: 'working', model: 'Opus 5', agents: [agentRec('pre', 'running')] };   // the server wakes a lead for its foreground agents
 isim.sync([lead], IP);
 var preAtSlot = Math.hypot(isim.agents['L/pre'].pos.x - IP.L.pod[0].x, isim.agents['L/pre'].pos.y - IP.L.pod[0].y) < 1e-6;
-var emptied = false, leadStays = true, arrived = false, handed = false, left = false, overflow = null, nestedParent = null;
+var emptied = false, leadStays = true, napped = false, woke = false, arrived = false, handed = false, left = false, overflow = null, nestedParent = null;
 var it = 0;
 for (var s2 = 0; s2 < 120 * 60; s2++) {
   it += dt;
@@ -115,20 +141,27 @@ for (var s2 = 0; s2 < 120 * 60; s2++) {
     isim.sync([lead], IP);
     overflow = Object.keys(isim.agents).filter(function (id) { return id.indexOf('L/') === 0 && isim.agents[id].server !== 'done'; }).length;
   }
+  if (Math.abs(it - 50) < dt / 2) {                        // 'pre' goes quiet, then picks up again
+    lead.agents[0] = agentRec('pre', 'asleep'); isim.sync([lead], IP);
+  }
+  if (Math.abs(it - 51) < dt / 2) napped = isim.agents['L/pre'].state.pose === 'dozing';
+  if (Math.abs(it - 60) < dt / 2) { lead.agents[0] = agentRec('pre', 'running'); isim.sync([lead], IP); }
+  if (Math.abs(it - 61) < dt / 2) woke = isim.agents['L/pre'].state.pose === 'standing';
   if (Math.abs(it - 80) < dt / 2) { lead.agents = []; isim.sync([lead], IP); emptied = true; }       // every agent gone
   isim.tick(dt);
   var L = isim.agents.L;
-  if (!emptied && (L.state.pose === 'walking' || L.state.pose === 'dozing')) leadStays = false;
+  if (!emptied && L.state.pose === 'dozing') leadStays = false;
   var n = isim.agents['L/new'];
   if (n && n.state.pose === 'standing' && Math.hypot(n.pos.x - IP.L.pod[n.slot].x, n.pos.y - IP.L.pod[n.slot].y) < 0.1) arrived = true;
   if (n && n.state.pose === 'handing') handed = true;
   if (handed && !isim.agents['L/new']) left = true;
 }
+expect(napped && woke, 'an asleep intern dozes in its slot and wakes when its agent runs again');
 expect(preAtSlot, 'an intern present at the first sync starts in its slot');
 expect(arrived, 'a new intern walks in to a pod slot');
 expect(nestedParent === 'L/new', 'a nested intern is tethered to the intern that spawned it');
 expect(handed && left, 'a done intern hands back at the desk and walks out');
-expect(leadStays, 'a lead with running interns never leaves its desk');
+expect(leadStays, 'a lead waiting on its foreground interns never dozes');
 expect(overflow === 4, 'the pod holds four; the rest wait in the rail (' + overflow + ')');
 expect(Object.keys(isim.agents).filter(function (id) { return id.indexOf('L/') === 0; }).length === 0, 'interns leave when the payload drops them');
 out.interns = { preAtSlot: preAtSlot, arrived: arrived, handed: handed, left: left,
