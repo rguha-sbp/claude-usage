@@ -1,0 +1,9 @@
+{
+  "port": 8765,
+  "threshold_tokens": 200000,
+  "statusline": { "warn_tokens": 150000, "alert_tokens": 180000 },
+  "ccusage_command": ["npx", "-y", "ccusage@latest"],
+  "claude_dir": "~/.claude",
+  "notifier": "/opt/homebrew/bin/terminal-notifier",
+  "refresh_seconds": 60
+}

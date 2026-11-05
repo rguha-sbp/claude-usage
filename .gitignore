@@ -1,0 +1,18 @@
+.superpowers/
+usage.db
+usage.db-*
+__pycache__/
+.pytest_cache/
+.claude/skills/impeccable/scripts/bin/
+.claude/settings.local.json
+.impeccable/decision-direction.json
+.impeccable/direction-contract-body.md
+.impeccable/hook.cache.json
+.venv/
+*.egg-info/
+build/
+# local design and agent tooling, not part of the project
+.claude/
+.impeccable/
+PRODUCT.md
+docs/superpowers/

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Claude Code usage</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="office.css">
+</head>
+<body>
+<div class="backdrop" aria-hidden="true"><i class="a"></i><i class="b"></i><i class="c"></i></div>
+
+<main class="page" id="page" aria-busy="true">
+  <header>
+    <h1><span id="title-month">Loading</span><small id="subtitle">Claude Code usage</small></h1>
+    <div class="controls">
+      <label class="picker" for="month-select">
+        <span class="sr-only">Month shown</span>
+        <select id="month-select" disabled></select>
+        <svg class="chev" width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8l5 5 5-5"/></svg>
+      </label>
+      <label class="picker" for="day-select">
+        <span class="sr-only">Day shown</span>
+        <select id="day-select" disabled></select>
+        <svg class="chev" width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8l5 5 5-5"/></svg>
+      </label>
+      <div class="seg" role="tablist" aria-label="View" id="tabs">
+        <span class="thumb" aria-hidden="true"></span>
+        <button type="button" role="tab" id="tab-month" aria-selected="true" aria-controls="pane-month" data-pane="month">Month</button>
+        <button type="button" role="tab" id="tab-sessions" aria-selected="false" aria-controls="pane-sessions" data-pane="sessions">Sessions</button>
+        <button type="button" role="tab" id="tab-projects" aria-selected="false" aria-controls="pane-projects" data-pane="projects">Projects</button>
+        <button type="button" role="tab" id="tab-office" aria-selected="false" aria-controls="pane-office" data-pane="office">Office</button>
+      </div>
+      <div class="seg" role="radiogroup" aria-label="Appearance" id="theme">
+        <span class="thumb" aria-hidden="true"></span>
+        <button type="button" role="radio" aria-checked="true" aria-selected="true" data-theme="auto">Auto</button>
+        <button type="button" role="radio" aria-checked="false" aria-selected="false" data-theme="light">Light</button>
+        <button type="button" role="radio" aria-checked="false" aria-selected="false" data-theme="dark">Dark</button>
+      </div>
+    </div>
+  </header>
+
+  <p id="stale" class="stale" role="status" aria-live="polite" hidden></p>
+
+  <!-- ============ MONTH ============ -->
+  <section class="pane" id="pane-month" role="tabpanel" aria-labelledby="tab-month" tabindex="-1">
+    <div class="grid trend-strip" id="trend-strip">
+      <article class="glass metric skeleton" aria-hidden="true"><div class="arrow sk-block"></div><div class="body"><span class="sk sk-head"></span><span class="sk sk-mag"></span><span class="sk sk-sub"></span></div></article>
+      <article class="glass metric skeleton" aria-hidden="true"><div class="arrow sk-block"></div><div class="body"><span class="sk sk-head"></span><span class="sk sk-mag"></span><span class="sk sk-sub"></span></div></article>
+      <article class="glass metric skeleton" aria-hidden="true"><div class="arrow sk-block"></div><div class="body"><span class="sk sk-head"></span><span class="sk sk-mag"></span><span class="sk sk-sub"></span></div></article>
+    </div>
+
+    <div class="grid row2">
+      <article class="glass panel">
+        <div class="panel-head"><h2 id="chart-title">Daily spend</h2><span class="hint" id="chart-hint">Reading your transcripts</span></div>
+        <svg class="chart" id="chart" viewBox="0 0 640 220" role="img" aria-label="Spend per day or per hour, with projection and the context threshold">
+          <g class="skeleton" aria-hidden="true"><rect class="sk-rect" x="40" y="60" width="580" height="120" rx="10"/></g>
+        </svg>
+        <div class="legend" id="chart-legend"></div>
+        <div class="split-group" id="split-threshold"></div>
+      </article>
+      <article class="glass panel">
+        <h2>Where it went</h2>
+        <div id="split-model"><span class="sk sk-row skeleton" aria-hidden="true"></span></div>
+        <div id="split-tokens" class="split-group"><span class="sk sk-row skeleton" aria-hidden="true"></span></div>
+      </article>
+    </div>
+
+    <article class="glass panel stack">
+      <div class="panel-head"><h2 id="movers-title">Sessions that moved the month</h2><span class="hint">Titled by what they were about. Rows keep their place when figures update.</span></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr>
+            <th scope="col">Session</th>
+            <th scope="col">Project &middot; directory</th>
+            <th scope="col">Last active</th>
+            <th scope="col" class="r" id="th-movers-value">Cost</th>
+            <th scope="col" class="r">Peak context</th>
+            <th scope="col" class="r">Tips</th>
+          </tr></thead>
+          <tbody id="movers-body"></tbody>
+        </table>
+      </div>
+      <div class="foot">
+        <span>Sorted by what they cost. Select a row to open its tips.</span>
+        <a href="#sessions" data-goto="sessions">All sessions</a>
+      </div>
+    </article>
+
+    <article class="glass panel stack">
+      <div class="panel-head"><h2>Skills and injected context</h2><span class="hint" id="skills-hint"></span></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr>
+            <th scope="col">Skill</th>
+            <th scope="col" class="r">Loads</th>
+            <th scope="col" class="r">Sessions</th>
+            <th scope="col" class="r">Tokens per load</th>
+            <th scope="col" class="r" id="th-skills-carried">Carried this month</th>
+            <th scope="col" class="r">Share of context</th>
+          </tr></thead>
+          <tbody id="skills-body"></tbody>
+        </table>
+      </div>
+      <div class="foot"><span id="skills-note"></span></div>
+    </article>
+
+    <article class="glass panel stack">
+      <h2 id="tips-title">This month&rsquo;s tips</h2>
+      <ul class="tips" id="month-tips"></ul>
+    </article>
+  </section>
+
+  <!-- ============ SESSIONS ============ -->
+  <section class="pane" id="pane-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="-1" hidden>
+    <div class="grid sessions">
+      <article class="glass panel">
+        <div class="panel-head"><h2>Sessions</h2><span class="hint" id="sessions-hint"></span></div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr>
+              <th scope="col">Session</th>
+              <th scope="col">Directory</th>
+              <th scope="col" class="r" id="th-sessions-value">Cost</th>
+              <th scope="col" class="r">Peak</th>
+              <th scope="col" class="r">Skills</th>
+            </tr></thead>
+            <tbody id="sessions-body"></tbody>
+          </table>
+        </div>
+      </article>
+      <article class="glass panel detail" id="detail" tabindex="-1"><p class="hint">Select a session to see where its tokens went.</p></article>
+    </div>
+  </section>
+
+  <!-- ============ PROJECTS ============ -->
+  <section class="pane" id="pane-projects" role="tabpanel" aria-labelledby="tab-projects" tabindex="-1" hidden>
+    <article class="glass panel">
+      <div class="panel-head"><h2 id="projects-title">Projects this month</h2><span class="hint" id="projects-hint">Dollars are allocated across days by weighted tokens. Grouping sessions by project is deferred.</span></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr>
+            <th scope="col">Project</th>
+            <th scope="col">Directory</th>
+            <th scope="col" class="r">Sessions</th>
+            <th scope="col" class="r" id="th-projects-value">Cost</th>
+            <th scope="col" class="r" id="th-projects-prev">vs last month</th>
+            <th scope="col" class="r" id="th-projects-over">Above threshold</th>
+          </tr></thead>
+          <tbody id="projects-body"></tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <!-- ============ OFFICE ============ -->
+  <section class="pane" id="pane-office" role="tabpanel" aria-labelledby="tab-office" tabindex="-1" hidden>
+    <article class="glass panel office">
+      <div class="panel-head"><h2>The office</h2><span class="hint" id="office-hint">Waiting for sessions to report in</span></div>
+      <div class="office-body">
+        <div class="office-stage" id="office-stage">
+          <svg class="office-scene" id="office-scene" viewBox="0 0 640 220" role="group" aria-label="Live Claude Code sessions as workers at their desks, one room per project, with their sub-agents as interns beside them"></svg>
+          <div class="office-card" id="office-card" role="tooltip" hidden></div>
+        </div>
+        <aside class="office-rail" id="office-rail" aria-label="Sessions and their sub-agents">
+          <div class="rail-head"><h3>Agents</h3><button type="button" id="office-rail-toggle" aria-expanded="true" aria-controls="office-rail-list">Hide</button></div>
+          <div class="rail-list" id="office-rail-list"></div>
+        </aside>
+      </div>
+      <div class="foot"><span>One worker per running session, rooms by project. A worker types while its session is busy and sleeps once it has been quiet for a minute; sleepers wander to the water cooler or out to the canteen on the plaza. Opus and Fable sessions are dressed for it. The light follows your clock. Select a worker to open the session. Sub-agents stand beside their lead as interns, tethered to whoever spawned them; the Agents rail lists every one with its model, tokens, tools and what it is doing.</span></div>
+    </article>
+  </section>
+
+  <footer class="page-foot">
+    <p id="foot-note"></p>
+    <p id="warn-note" hidden></p>
+  </footer>
+</main>
+<script src="format.js"></script>
+<script src="app.js"></script>
+<script src="office-cast.js"></script>
+<script src="office-world.js"></script>
+<script src="office-sim.js"></script>
+<script src="office-figures.js"></script>
+<script src="office-rail.js"></script>
+<script src="office.js"></script>
+</body>
+</html>
