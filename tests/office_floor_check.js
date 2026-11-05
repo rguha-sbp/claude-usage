@@ -193,4 +193,58 @@ function drive(projects) {
 }
 report.sim = { 1: drive(1), 4: drive(4), 12: drive(12) };
 expect(report.sim[4].cooler || report.sim[12].cooler, 'workers drink at a water cooler');
+
+/* A session can end wherever its worker is: at the canteen, at the cooler
+   of another row, or halfway along a walk out or home. End sessions as
+   their workers reach each of those places and check every leg of the walk
+   to the door against the desks, the partitions and the decor. */
+function leaveAnywhere(projects) {
+  var data = payload(projects);
+  var plan = F.build(data, THEMES[0]);
+  var desks = plan.desks.map(function (d) { return box(d.x, d.y, d.x + d.w, d.y + d.d); });
+  var parts = plan.partitions.map(function (pt) { return grow(box(pt.x1, pt.y1, pt.x2, pt.y2), 0.08); });
+  var decor = plan.decor.filter(function (d) { return d.mount === 'floor'; }).map(function (d) { return grow(footprint(d), 0.05); });
+  var workers = [];
+  data.rooms.forEach(function (room) { room.workers.forEach(function (w) { workers.push(w); }); });
+  var sim = new window.OfficeSim.Sim({ wander: true });
+  sim.sync(workers, plan.places);
+  var from = { canteen: 0, otherRowCooler: 0, walkingOut: 0, walkingHome: 0 };
+  var gone = {}, pending = {}, crossed = null, dt = 1 / 30;
+  var startOf = function (ag) {
+    var st = ag.state;
+    if (st.pose === 'lounging') return 'canteen';
+    if (st.pose === 'drinking' && ag.places.row > 0) return 'otherRowCooler';
+    if (st.pose === 'walking' && st.opts.errand && ag.wp > 1) return 'walkingOut';
+    if (st.pose === 'walking' && st.opts.home && ag.wp > 1) return 'walkingHome';
+    return null;
+  };
+  for (var t = 0; t < 400 * 30; t++) {
+    sim.tick(dt);
+    Object.keys(pending).forEach(function (id) {
+      var ag = sim.agents[id];
+      if (!ag || !ag.state.opts || !ag.state.opts.leaving) return;
+      delete pending[id];
+      var legs = [copyPt(ag.pos)].concat(ag.route);
+      for (var k = 1; k < legs.length; k++) {
+        var a = legs[k - 1], c = legs[k], at = gone[id] + ': ' + a.x.toFixed(2) + ',' + a.y.toFixed(2) + ' -> ' + c.x.toFixed(2) + ',' + c.y.toFixed(2);
+        desks.concat(parts, decor).forEach(function (s) { if (!crossed && segHits(a, c, s)) crossed = at; });
+      }
+    });
+    var leaver = sim.list().filter(function (ag) {
+      var kind = ag.kind === 'lead' && !gone[ag.id] && startOf(ag);
+      return kind && from[kind] < 3;
+    })[0];
+    if (leaver) {
+      gone[leaver.id] = startOf(leaver);
+      from[gone[leaver.id]] += 1;
+      pending[leaver.id] = true;
+      sim.sync(workers.filter(function (w) { return !gone[w.session_id]; }), plan.places);
+    }
+  }
+  expect(crossed === null, projects + ': a leaver walks through furniture (' + crossed + ')');
+  Object.keys(from).forEach(function (k) { expect(from[k] > 0, projects + ': somebody leaves from ' + k); });
+  return from;
+}
+function copyPt(pt) { return { x: pt.x, y: pt.y }; }
+report.leavers = leaveAnywhere(12);
 console.log(JSON.stringify(report));

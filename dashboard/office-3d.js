@@ -14,7 +14,7 @@
    and hover(id or null) report the pointer; drawn() follows every frame. */
 import * as THREE from 'three';
 import { buildScenery } from './office-scenery.js';
-import { Person } from './office-people.js';
+import { Person, SITTING } from './office-people.js';
 
 const VIEW = new THREE.Vector3(1, 0.816, 1).normalize();     // toward the camera: the classic isometric angle
 const SUN = new THREE.Vector3(-0.55, 1, -0.35).normalize();  // in through the back-left windows
@@ -23,7 +23,6 @@ const ZOOM = [1, 4];
 const CLICK_PX = 4;
 const STEP = 0.05;            // the simulation's step, in seconds, when catching up
 const CATCH_UP = 10;          // and the most it catches up in one go
-const SITTING = { typing: 1, thinking: 1, dozing: 1, lounging: 1 };
 const WAVE_RANGE = 2.5;       // a leaver waves goodbye this close to the door
 
 export class OfficeView {
@@ -51,9 +50,12 @@ export class OfficeView {
     this.sun.shadow.normalBias = 0.02;
     this.figures = new THREE.Group();
     this.tethers = {
-      solid: new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: '#5b6b7d', transparent: true, opacity: 0.7 })),
-      dashed: new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: '#5b6b7d', dashSize: 0.08, gapSize: 0.06, transparent: true, opacity: 0.7 }))
+      solid: new THREE.LineSegments(lineGeometry(0), new THREE.LineBasicMaterial({ color: '#5b6b7d', transparent: true, opacity: 0.7 })),
+      dashed: new THREE.LineSegments(lineGeometry(0), new THREE.LineDashedMaterial({ color: '#5b6b7d', dashSize: 0.08, gapSize: 0.06, transparent: true, opacity: 0.7 }))
     };
+    /* Tethers follow walkers anywhere on the floor and are rewritten every
+       frame: never cull them on a stale bounding sphere. */
+    this.tethers.solid.frustumCulled = this.tethers.dashed.frustumCulled = false;
     this.scene.add(this.hemi, this.sun, this.sun.target, this.figures, this.tethers.solid, this.tethers.dashed);
 
     this.people = new Map();
@@ -265,21 +267,13 @@ export class OfficeView {
       if (!a || !b) return;
       lines[f.background ? 'dashed' : 'solid'].push(chest(b), chest(a));
     });
-    Object.keys(lines).forEach((k) => {
-      const line = this.tethers[k];
-      if (line.geometry.attributes.position && line.geometry.attributes.position.count === lines[k].length) {
-        line.geometry.setFromPoints(lines[k]);
-      } else {
-        line.geometry.dispose();
-        line.geometry = new THREE.BufferGeometry().setFromPoints(lines[k]);
-      }
-      if (k === 'dashed') line.computeLineDistances();
-    });
+    Object.keys(lines).forEach((k) => segments(this.tethers[k], lines[k]));
   }
 
   // ---------------------------------------------------------------- loop
   setActive(on) {
     this.active = on;
+    this.hovered = null;          // a hidden canvas gets no pointerleave: the next move reports afresh
     if (on && this.stillMode) this.still();
     this.kick();
   }
@@ -334,6 +328,29 @@ export class OfficeView {
     this.canvas.dataset.rendered = '1';
     this.hooks.drawn();
   }
+}
+
+/* Write `points` (pairs) into a LineSegments in place; new buffers only
+   when the count changes. Each segment's own length goes into
+   `lineDistance` for the dashes: `computeLineDistances()` would allocate a
+   fresh attribute, and leak its GPU buffer, on every frame. */
+function segments(line, points) {
+  let g = line.geometry;
+  if (g.attributes.position.count !== points.length) {
+    g.dispose();
+    g = line.geometry = lineGeometry(points.length);
+  }
+  g.setFromPoints(points);
+  const d = g.attributes.lineDistance;
+  for (let i = 0; i < points.length; i += 2) d.setX(i + 1, points[i].distanceTo(points[i + 1]));
+  d.needsUpdate = true;
+}
+
+function lineGeometry(n) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(n * 3, 3));
+  g.setAttribute('lineDistance', new THREE.Float32BufferAttribute(n, 1));
+  return g;
 }
 
 const CHEST = 1.05;

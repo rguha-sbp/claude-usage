@@ -28,7 +28,7 @@
 window.OfficeFloor = (function () {
   'use strict';
 
-  var hash = window.OfficeCast.hash;
+  var hash = window.OfficeCast.hash, rng = window.OfficeCast.rng;
 
   // --------------------------------------------------------------- sizes
   var DESK = { w: 0.75, d: 1.3 };   // across x by along y
@@ -81,16 +81,6 @@ window.OfficeFloor = (function () {
   function inside(a, b) { return a.x0 >= b.x0 - 1e-9 && a.x1 <= b.x1 + 1e-9 && a.y0 >= b.y0 - 1e-9 && a.y1 <= b.y1 + 1e-9; }
   function p(x, y) { return { x: x, y: y }; }
   function spot(x, y, at, via) { return { x: x, y: y, lane: { axis: 'y', at: at }, via: via }; }
-
-  function rng(seed) {                          // mulberry32, as in office-sim.js
-    var t = seed >>> 0;
-    return function () {
-      t = (t + 0x6D2B79F5) >>> 0;
-      var r = Math.imul(t ^ (t >>> 15), 1 | t);
-      r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
-      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-    };
-  }
 
   // ------------------------------------------------------------- sizing
   function sizeNb(room, index) {

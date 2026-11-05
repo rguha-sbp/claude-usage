@@ -63,6 +63,18 @@ window.OfficeCast = (function () {
     return h >>> 0;
   }
 
+  /* mulberry32: the one seeded random source (habits in office-sim.js, the
+     decor fill in office-floor.js), so the same seed always plays the same. */
+  function rng(seed) {
+    var t = seed >>> 0;
+    return function () {
+      t = (t + 0x6D2B79F5) >>> 0;
+      var r = Math.imul(t ^ (t >>> 15), 1 | t);
+      r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
   /* Tool families (spec Sec 13.4): one table for leads and interns. The
      family picks the pose class and the glyph over the figure's head. */
   var FAMILIES = {
@@ -87,5 +99,5 @@ window.OfficeCast = (function () {
   function badgeOf(type) { return BADGES[hash(String(type || '')) % BADGES.length]; }
 
   return { TIERS: TIERS, tierOf: tierOf, internTierOf: internTierOf, skyOf: skyOf, SKIES: SKIES,
-           hash: hash, FAMILIES: FAMILIES, familyOf: familyOf, badgeOf: badgeOf };
+           hash: hash, rng: rng, FAMILIES: FAMILIES, familyOf: familyOf, badgeOf: badgeOf };
 })();

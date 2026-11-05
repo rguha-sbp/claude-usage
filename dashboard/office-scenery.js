@@ -1,14 +1,14 @@
 /* The floor's scenery (spec Sec 15.4): turns an office-floor.js plan and a
    theme into meshes. Everything static goes through one Batch, so the whole
    floor is a few dozen instanced draws whatever its size; the few live
-   parts (each desk's monitor glow and lamp, the notice board) are their own
-   meshes, switched by `setDesk` and `setBoard` without a rebuild.
+   parts (each desk's monitor glow, lamp, name plate and `+N` counter, the
+   notice board) are their own meshes, switched by `setDesk` and `setBoard`
+   without a rebuild, so a rename or a new intern costs no shadow redraw.
 
    `dress` is what the plan does not know: `night` (lamps throw light
-   pools), and per desk the sitter's `tier`, `title` and `extra` (sub-agents
-   beyond the pod's four slots). */
+   pools), and per desk the sitter's `tier` (its chair and ornament). */
 import * as THREE from 'three';
-import { Batch, canvasTexture, dispose } from './office-kit.js';
+import { Batch, canvasTexture, dispose, shared } from './office-kit.js';
 import { BUILDERS, buildDesk } from './office-decor.js';
 
 const WALL_T = 0.15;
@@ -182,14 +182,14 @@ function hedge(part, w, a0, a1, step, y) {
 }
 
 // ----------------------------------------------------------- live parts
-const HALO = canvasTexture(64, 64, (g, w, h) => {
+const HALO = shared(canvasTexture(64, 64, (g, w, h) => {
   const r = g.createRadialGradient(w / 2, h / 2, 2, w / 2, h / 2, w / 2);
   r.addColorStop(0, 'rgba(255,255,255,1)');
   r.addColorStop(0.5, 'rgba(255,255,255,0.45)');
   r.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = r;
   g.fillRect(0, 0, w, h);
-});
+}));
 
 function glowMaterial(color, opacity) {
   return new THREE.MeshBasicMaterial({ map: HALO, color: new THREE.Color(color), transparent: true, opacity: opacity,
@@ -223,12 +223,35 @@ function textPanel(lines, opts) {
 
 function truncate(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 3) + '...' : s; }
 
-function sprite(panel, x, y, z) {
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: panel.tex, transparent: true }));
+/* Point `material` at a text panel of `lines`. Returns the panel, or null
+   when the material already shows those lines: the board and the name
+   plates are rewritten on every poll, but repainted only on a change. */
+function paint(material, lines, opts) {
+  const key = JSON.stringify(lines);
+  if (material.userData.text === key) return null;
+  material.userData.text = key;
+  if (material.map) material.map.dispose();
+  const panel = textPanel(lines, opts);
+  material.map = panel.tex;
+  material.needsUpdate = true;
+  return panel;
+}
+
+/* A one-line label standing on the floor or floating over it, empty and
+   hidden until `write` gives it text. */
+function label(style, x, y, z) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
   s.center.set(0.5, 0);
-  s.scale.set(panel.w, panel.h, 1);
   s.position.set(x, y, z);
+  s.visible = false;
+  s.userData.style = style;
   return s;
+}
+
+function write(s, text) {
+  s.visible = text !== '';
+  const panel = s.visible && paint(s.material, [{ text: text, bold: true }], s.userData.style);
+  if (panel) s.scale.set(panel.w, panel.h, 1);
 }
 
 /* A flat panel on a piece of decor, `y` up and `z` out in its own frame. */
@@ -282,16 +305,11 @@ export function buildScenery(plan, theme, dress) {
     halo.position.set(cx + 0.25, 1.05, cz);
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), off);
     bulb.position.set(cx + 0.2, 1.06, cz - 0.4);
-    root.add(halo, bulb);
-    live.set(desk.sid, { halo: halo, bulb: bulb });
-
-    root.add(sprite(textPanel([{ text: truncate(d.title, 26), bold: true }], { bg: 'rgba(255,255,255,0.88)', ink: '#2a2e33', scale: 0.3 }),
-      desk.seat.x + 0.45, 0.02, desk.y + desk.d + 0.25));
-    if (d.extra > 0) {
-      const pod = plan.places[desk.sid].pod;
-      root.add(sprite(textPanel([{ text: '+' + d.extra, bold: true }], { bg: pal.accent, ink: '#ffffff', scale: 0.3 }),
-        pod[pod.length - 1].x + 0.3, 1.3, pod[pod.length - 1].y));
-    }
+    const title = label({ bg: 'rgba(255,255,255,0.88)', ink: '#2a2e33', scale: 0.3 }, desk.seat.x + 0.45, 0.02, desk.y + desk.d + 0.25);
+    const pod = plan.places[desk.sid].pod, corner = pod[pod.length - 1];
+    const extra = label({ bg: pal.accent, ink: '#ffffff', scale: 0.3 }, corner.x + 0.3, 1.3, corner.y);
+    root.add(halo, bulb, title, extra);
+    live.set(desk.sid, { halo: halo, bulb: bulb, title: title, extra: extra });
   });
 
   root.add(batch.build());
@@ -303,23 +321,25 @@ export function buildScenery(plan, theme, dress) {
 
   return {
     root: root,
-    setDesk(sid, working) {
+    /* One desk's live state: `working` lights the screen and the lamp,
+       `title` is the name plate, `extra` the interns past the pod. */
+    setDesk(sid, state) {
       const parts = live.get(sid);
       if (!parts) return;
-      parts.halo.visible = working;
-      parts.bulb.material = working ? on.bulb : off;
+      parts.halo.visible = state.working;
+      parts.bulb.material = state.working ? on.bulb : off;
+      write(parts.title, truncate(state.title, 26));
+      write(parts.extra, state.extra > 0 ? '+' + state.extra : '');
     },
     /* The notice board: the day's numbers, one line each. */
     setBoard(lines) {
-      if (!board) return;
-      if (boardMaterial.map) boardMaterial.map.dispose();
-      boardMaterial.map = textPanel(lines, { bg: pal.dark, ink: '#ffffff', scale: 0.32, size: boardSize }).tex;
-      boardMaterial.color.set('#ffffff');
-      boardMaterial.needsUpdate = true;
+      if (board && paint(boardMaterial, lines, { bg: pal.dark, ink: '#ffffff', scale: 0.32, size: boardSize })) {
+        boardMaterial.color.set('#ffffff');
+      }
     },
     dispose() {
-      dispose(root);
-      [on.halo, on.bulb, off, boardMaterial].forEach((m) => { if (m.map && m.map !== HALO) m.map.dispose(); m.dispose(); });
+      dispose(root);                       // the board's map goes with its panel; HALO is shared
+      [on.halo, on.bulb, off, boardMaterial].forEach((m) => m.dispose());
     }
   };
 }

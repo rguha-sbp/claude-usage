@@ -451,17 +451,17 @@ Requested on 2026-11-05: replace the SVG campus with a three.js open-plan office
 
 ### 15.2 The simulation on the floor
 
-`office-sim.js` keeps its contract (12.3, 13.4, 14). One change: `GRIP = 8` in the `arrive` steering. Without it a walker overshot at a corner and cut across furniture; `tests/office_floor_check.js` drives the simulation over real floors and fails on anyone who walks through a desk or a piece of decor.
+`office-sim.js` keeps its contract (12.3, 13.4, 14). Two changes. `GRIP = 8` in the `arrive` steering: without it a walker overshot at a corner and cut across furniture. And a leaver walks out from wherever it is: the door's `via` starts at the worker's own aisle, so `walkOut` follows the route the worker is on, back or ahead, to the nearest point of its way out (seat, aisle, the door's `via`, the door), then folds the out-and-back stretches. Every leg is one the floor already keeps clear. `tests/office_floor_check.js` drives the simulation over real floors and fails on anyone who walks through a desk or a piece of decor, including sessions that end at the canteen, at another row's cooler or halfway along a walk.
 
 ### 15.3 Themes
 
-`office-themes.js` is pure data: Studio (pale wood planks, planter partitions), Loft (concrete, brick partitions, warm lamps) and Greenhouse (terracotta tiles, vine partitions, a planted bed). A theme sets the palette by role, the floor pattern, the partition style, the decor weights and density, the centrepiece and the light. People are not themed. The picker in the panel head stores the choice in `localStorage` (`usage.office.theme`); `?office=<key>` previews a theme and `?hour=<0-23>` a time of day.
+`office-themes.js` is pure data: Studio (pale wood planks, planter partitions), Loft (concrete, brick partitions, warm lamps) and Greenhouse (terracotta tiles, vine partitions, a planted bed). A theme sets the palette by role, the floor pattern, the partition style, the decor weights and density, the centrepiece and the light. People are not themed. The picker in the panel head stores the choice in `localStorage` (`usage.office.theme`); `?office=<key>` previews a theme until the reader picks one (the pick drops the parameter) and `?hour=<0-23>` previews a time of day.
 
 ### 15.4 Scenery
 
 - `office-kit.js`: unit shapes, the `Batch` that turns every static part into one `InstancedMesh` per (layer, shape), the material cache and canvas textures.
 - `office-decor.js`: one builder per decor kind and the desk.
-- `office-scenery.js`: the floor canvas, walls, windows, partitions, rooms, signs, the notice board and the desk screens. `setDesk(id, working)` lights a screen and `setBoard(lines)` repaints the board without a rebuild.
+- `office-scenery.js`: the floor canvas, walls, windows, partitions, rooms, signs, the notice board and the desk screens. `setDesk(id, {working, title, extra})` lights a screen and writes the name plate and the `+N` counter, and `setBoard(lines)` writes the board, all without a rebuild; a label repaints only when its text changes. A rebuild disposes what it built, never the shared shapes, materials and textures (`shared` in `office-kit.js`).
 
 Static shadows are drawn once per rebuild (`shadowMap.autoUpdate = false`); figures use blob shadows.
 
@@ -477,4 +477,4 @@ three r187 is vendored in `dashboard/vendor/three` (the npm tarball's `three.mod
 
 ### 15.7 Controller, accessibility and tests
 
-`office.js` is an ES module: it fetches every 5 s, feeds the simulation and the view, and owns the hover card, the theme picker, the Agents rail links and a screen-reader roster of buttons (one per worker). Tests: `tests/office_floor_check.js` (every floor size in every theme), `tests/office_themes_check.js` (complete themes, names the scenery draws), static checks for the import map and the vendored hashes, and `tests/test_office_browser.py`, which loads the office in headless Chrome against the real server and fails without a rendered frame or on a console error (skipped without Chrome).
+`office.js` is an ES module: it fetches every 5 s, feeds the simulation and the view, and owns the hover card, the theme picker, the Agents rail links and a screen-reader roster of buttons (one per worker). The empty-office note replaces the canvas only once the last figure has walked out. Tests: `tests/office_floor_check.js` (every floor size in every theme), `tests/office_themes_check.js` (complete themes, names the scenery draws), static checks for the import map and the vendored hashes, and `tests/test_office_browser.py`, which loads the office in headless Chrome against the real server and fails without a rendered frame or on a console error (skipped without Chrome).

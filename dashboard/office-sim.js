@@ -30,16 +30,7 @@ window.OfficeSim = (function () {
   var BREAK_CHANCE = 0.3;   // a working lead between thoughts steps away this often
 
   // ------------------------------------------------------------ helpers
-  var hash = window.OfficeCast.hash;          // office-cast.js loads first
-  function rng(seed) {                        // mulberry32: same session, same habits
-    var t = seed >>> 0;
-    return function () {
-      t = (t + 0x6D2B79F5) >>> 0;
-      var r = Math.imul(t ^ (t >>> 15), 1 | t);
-      r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
-      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-    };
-  }
+  var hash = window.OfficeCast.hash, rng = window.OfficeCast.rng;   // office-cast.js loads first
   function between(r, a, b) { return a + r() * (b - a); }
   function copy(p) { return { x: p.x, y: p.y }; }
   function tierOf(model) {
@@ -99,6 +90,52 @@ window.OfficeSim = (function () {
     var seat = a.places.seat;
     var back = (a.route || []).slice(0, a.wp).reverse();
     return new Walk(back.concat([copy(seat)]), seat, then, { home: true });
+  }
+
+  /* The way out from wherever the worker is (spec Sec 15.2): a session can
+     end at the canteen, at another row's cooler or halfway along a walk,
+     and the door's `via` starts at the worker's own aisle. So walk the
+     route it is on, back or ahead, to the nearest point of its own way out
+     (seat, aisle, the door's `via`, the door), and follow that to the door.
+     Every leg is one the floor already keeps clear for the trips out and
+     back; `straighten` then folds the out-and-back stretches, so nobody
+     walks to the spine just to turn round in the corridor. */
+  function walkOut(a, then) {
+    var seat = a.places.seat, door = a.places.door;
+    var way = [copy(seat), laneAt(seat.lane, seat)].concat(door.via || [], [copy(door)]);
+    var best = [joinWay(a.route.slice(0, a.wp).reverse(), way, a.pos), joinWay(a.route.slice(a.wp), way, a.pos)]
+      .filter(Boolean).sort(function (p, q) { return p.length - q.length; })[0];
+    var points = best ? best.legs.concat(way.slice(best.at + 1)) : way;
+    return new Walk(straighten([copy(a.pos)].concat(points)), door, then, { leaving: true });
+  }
+
+  /* Along `chain` from `pos` to its first point on `way`, or null. */
+  function joinWay(chain, way, pos) {
+    var length = 0, last = pos;
+    for (var i = 0; i < chain.length; i++) {
+      length += Math.hypot(chain[i].x - last.x, chain[i].y - last.y);
+      last = chain[i];
+      for (var j = 0; j < way.length; j++) {
+        if (Math.hypot(way[j].x - last.x, way[j].y - last.y) < 1e-6) return { legs: chain.slice(0, i + 1), at: j, length: length };
+      }
+    }
+    return null;
+  }
+
+  /* Drop every waypoint that lies on the line through its neighbours. The
+     walk from the first to the last of three such points never leaves the
+     two legs it replaces. */
+  function straighten(points) {
+    var out = [];
+    points.forEach(function (q) {
+      while (out.length >= 2) {
+        var a = out[out.length - 2], b = out[out.length - 1];
+        if (Math.abs((b.x - a.x) * (q.y - b.y) - (b.y - a.y) * (q.x - b.x)) > 1e-6) break;
+        out.pop();
+      }
+      out.push(q);
+    });
+    return out;
   }
 
   // ------------------------------------------------------------ DECIDE
@@ -249,7 +286,7 @@ window.OfficeSim = (function () {
   Leaving.prototype.enter = function (a, sim) {
     a.leaving = true;
     sim.release(a);
-    sim.transition(a, walkTo(a, a.places.door, function () { return new Gone(); }, { leaving: true }));
+    sim.transition(a, walkOut(a, function () { return new Gone(); }));
   };
   Leaving.prototype.update = function () { return null; };
 
@@ -320,6 +357,8 @@ window.OfficeSim = (function () {
     if (!AWAY[a.state.pose] && (a.places.seat.x !== seat.x || a.places.seat.y !== seat.y)) {
       a.pos = copy(seat);
       a.lane = seat.lane;
+      a.route = [];                        // the last walk was on the old floor: walkOut must not retrace it
+      a.wp = 0;
     }
   }
 

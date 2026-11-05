@@ -188,7 +188,8 @@ const POSES = {
 };
 /* What each pose holds. */
 const PROPS = { drinking: 'cup', lounging: 'cup', standing: 'tablet', handing: 'folder' };
-const SITTING = { typing: 1, thinking: 1, dozing: 1, lounging: 1 };
+/* The poses a figure takes in a chair when one is under it. */
+export const SITTING = { typing: 1, thinking: 1, dozing: 1, lounging: 1 };
 
 function evaluate(name, t, s) { return Object.assign({}, NEUTRAL, POSES[name](t, s)); }
 

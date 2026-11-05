@@ -76,7 +76,6 @@ function render(data) {
   $('office-hint').textContent = n.total
     ? n.working + ' working · ' + (n.total - n.working) + ' asleep · updated ' + clock(data.generated_at)
     : 'No session has reported in yet';
-  stage.classList.toggle('vacant', !n.total);
   state.workers = {};
   state.subs = {};
   const flat = [];
@@ -88,6 +87,7 @@ function render(data) {
   const plan = n.total ? Floor.build(data, state.theme) : null;
   sim.sync(flat, plan ? plan.places : {});
   remember();
+  markVacant();
   if (!plan) { renderRoster(); return; }
   const light = sky();
   stage.style.setProperty('--sky-top', light.top);
@@ -97,21 +97,26 @@ function render(data) {
   const view = state.view;
   if (view) {
     const sig = state.theme.key + '@' + light.key + '@' + data.rooms.map((room) => room.project + ':' +
-      room.workers.map((worker) => worker.session_id + '/' + Cast.tierOf(worker.model).key + '/' + worker.title + '/' +
-        Math.max(0, extraOf(worker))).join(',')).join('|');
+      room.workers.map((worker) => worker.session_id + '/' + Cast.tierOf(worker.model).key).join(',')).join('|');
     if (sig !== state.sig) {
       state.sig = sig;
       const desks = {};
-      flat.forEach((worker) => {
-        desks[worker.session_id] = { tier: Cast.tierOf(worker.model), title: worker.title, extra: extraOf(worker) };
-      });
+      flat.forEach((worker) => { desks[worker.session_id] = { tier: Cast.tierOf(worker.model) }; });
       view.setFloor(plan, state.theme, { night: light.lamps, desks }, light);
     }
-    flat.forEach((worker) => view.scenery.setDesk(worker.session_id, worker.state === 'working'));
+    flat.forEach((worker) => view.scenery.setDesk(worker.session_id,
+      { working: worker.state === 'working', title: worker.title, extra: extraOf(worker) }));
     view.scenery.setBoard(boardLines(data, n));
     if (reduceMotion && state.visible) view.still();
   }
   renderRoster();
+}
+
+/* The empty-office note replaces the canvas only once the last leaver is
+   out of the door: a session that ends leaves the payload at once, but
+   its worker still walks out. Checked on every poll and every frame. */
+function markVacant() {
+  $('office-stage').classList.toggle('vacant', !sim.list().length);
 }
 
 /* Who each agent on the floor is, kept until it has walked out: a session
@@ -243,13 +248,15 @@ function hideCard() {
   state.card = null;
 }
 
+/* The pointer or the roster focus is on `id`, or on nobody. The link
+   follows it whether or not `id` has a card (a leaver no longer does). */
 function hover(id) {
-  if (state.card && state.card !== id) link(state.card, false);
+  if (state.linked && state.linked !== id) link(state.linked, false);
   if (id) { showCard(id); link(id, true); } else hideCard();
 }
 
 function open(id) {
-  hideCard();
+  hover(null);
   const intern = state.subs[id];
   window.usageDashboard.openSession(intern ? intern.worker.session_id : id);
 }
@@ -286,9 +293,13 @@ function markTheme() {
   window.usageDashboard.selectSeg(seg, seg.querySelector('[data-office="' + state.theme.key + '"]'));
 }
 
+/* A pick beats a `?office=` preview: the parameter goes, or a reload
+   (app.js syncUrl keeps the query) would bring the preview back. */
 function chooseTheme(key) {
   state.theme = Themes.themeOf(key);
   try { localStorage.setItem(THEME_KEY, state.theme.key); } catch (e) { /* private mode */ }
+  const url = new URL(location.href);
+  if (url.searchParams.has('office')) { url.searchParams.delete('office'); history.replaceState(null, '', url); }
   markTheme();
   if (state.data) render(state.data);
 }
@@ -317,7 +328,7 @@ function setVisible(on) {
 try {
   state.view = new OfficeView($('office-view'), {
     advance: (dt) => sim.tick(dt), figures, pick: open, hover,
-    drawn: () => { if (state.card) placeCard(state.card); }
+    drawn: () => { if (state.card) placeCard(state.card); markVacant(); }
   }, reduceMotion);
   state.view.canvas.setAttribute('role', 'img');
   state.view.canvas.setAttribute('aria-label', 'The office floor: live Claude Code sessions as workers at their desks, ' +

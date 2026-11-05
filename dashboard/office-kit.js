@@ -9,6 +9,12 @@
    is a rebuild with a different palette and nothing else. */
 import * as THREE from 'three';
 
+/* Module-level resources that outlive any one floor: `dispose` skips them.
+   three's own Sprite quad is one geometry shared by every sprite, so it
+   belongs here too, or a scenery rebuild would free the people's glyphs. */
+const SHARED = new WeakSet([new THREE.Sprite().geometry]);
+export function shared(resource) { SHARED.add(resource); return resource; }
+
 /* Unit shapes. All but the balls stand on y = 0 and are centred on x and z,
    so a part's position is the middle of its base. */
 export const SHAPES = {
@@ -19,6 +25,7 @@ export const SHAPES = {
   bush: new THREE.IcosahedronGeometry(0.5, 0),
   ring: new THREE.TorusGeometry(0.5, 0.08, 6, 18)
 };
+Object.values(SHAPES).forEach(shared);
 
 /* How a batch layer is drawn: solid parts cast and catch the frozen
    shadows; glass is see-through; glow ignores the light (LEDs, screens). */
@@ -86,7 +93,7 @@ export class Batch {
 const materials = new Map();
 export function mat(color) {
   const key = String(color);
-  if (!materials.has(key)) materials.set(key, new THREE.MeshLambertMaterial({ color: new THREE.Color(color), flatShading: true }));
+  if (!materials.has(key)) materials.set(key, shared(new THREE.MeshLambertMaterial({ color: new THREE.Color(color), flatShading: true })));
   return materials.get(key);
 }
 
@@ -101,17 +108,13 @@ export function canvasTexture(w, h, draw) {
   return tex;
 }
 
-/* Free everything under `root`: geometries we own, materials and their maps.
-   The shared unit shapes and cached materials stay. */
+/* Free everything under `root`: geometries, materials and their maps,
+   except the shared ones. */
 export function dispose(root) {
-  const shared = new Set(Object.values(SHAPES));
-  const cached = new Set(materials.values());
+  const free = (r) => { if (r && !SHARED.has(r)) r.dispose(); };
   root.traverse((o) => {
-    if (o.geometry && !shared.has(o.geometry)) o.geometry.dispose();
-    if (o.material && !cached.has(o.material)) {
-      if (o.material.map) o.material.map.dispose();
-      o.material.dispose();
-    }
+    free(o.geometry);
+    if (o.material && !SHARED.has(o.material)) { free(o.material.map); o.material.dispose(); }
     if (o.isInstancedMesh) o.dispose();
   });
 }
