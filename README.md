@@ -69,44 +69,41 @@ or `?period=2026-09-14`), so a day view can be bookmarked and reloaded.
 - **Projects** — the same figures rolled up by project directory, useful
   for seeing which repo or client is actually costing the most.
 - **Office** — every Claude Code session that is running right now as a
-  small worker at a desk, in an isometric campus: one room per project,
-  each with a water cooler, a plant and a doorway, and out in front a
-  plaza with a canteen, a notice board and a server room. A worker types
-  while its session is busy (or waits on a foreground sub-agent), leaning
-  back to think now and then, and slumps over the desk with z's once the
-  session has been quiet for a minute. Sleepers stay asleep at their desks.
-  A working lead sometimes takes a short break between thoughts: a drink
-  at the cooler, a chat in the aisle with another worker from the same
-  room, or a walk out to the canteen — the one place where workers from
-  different projects stand together and talk. A session that falls asleep
-  mid-break walks home and dozes. When the session's process exits the
-  worker walks out through the door and fades. Each worker's hair, glasses and coat come from its session id and
-  its shirt from its model, so the same session always looks the same.
-  The model decides the rest (only leads, never sub-agent interns, get the
-  crown and the halo): Opus wears a crown and keeps a trophy on a
-  gold-trimmed desk, Fable a monocle and a silk coat beside an orchid,
-  Sonnet is an ordinary worker and Haiku is smaller, quicker and wears
-  headphones (`dashboard/office-cast.js`). The notice board carries the
-  day's real numbers — spend so far, the busiest project, how many
-  sessions are awake — and the racks in the server room blink faster while
-  sessions are working. The whole scene is lit by your own clock: morning,
-  afternoon, sunset, then dark windows, stars and desk lamps after hours.
-  The behaviour is a small state machine per worker with steering along
-  waypoints (`dashboard/office-sim.js`), the campus layout and scenery are
-  pure functions (`dashboard/office-world.js`), and `dashboard/office.js`
-  is the controller that fetches and animates. Sub-agents show up as interns
-  beside their lead (tethered to whoever spawned them, with a glyph for the
-  tool they are using), and the Agents rail lists each one with its type,
-  task, model, tokens, tool count and current tool; finished ones stay
-  greyed for two hours. None of the first three
-  touch the DOM, so node drives them in `tests/office_*_check.js`. Hover
-  for the title, model and how long it has been in that state, plus the
-  last thing the session said when it is asleep (usually the question it
-  is waiting on). Click to open the session on the Sessions tab. State
-  comes from the statusline alone: every run stamps the session's file
-  under `~/.claude/usage-state/` with the time, working directory, model,
-  transcript path and the Claude process id. No hooks, and nothing in
-  the office ever acts on a session. Thresholds live in `config.json`
+  worker at a desk on an open-plan office floor drawn in three.js: one
+  neighbourhood per project, with a server room, meeting rooms, a kitchen,
+  a lounge, a library and reception around them. Pick a theme in the panel
+  head (Studio, Loft or Greenhouse); drag to pan, scroll to zoom. A worker
+  types while its session is busy (or waits on a foreground sub-agent),
+  leaning back to think now and then, and dozes at the desk with z's once
+  the session has been quiet for a minute. Sleepers stay asleep at their
+  desks. A working lead sometimes takes a short break between thoughts: a
+  drink at the cooler, a chat with a colleague from the same project, or a
+  walk to the kitchen or the lounge, where workers from different projects
+  meet. When the session's process exits the worker walks to the door and
+  waves goodbye. Each worker's hair, glasses and coat come from its session
+  id and its shirt from its model, so the same session always looks the
+  same. Only leads, never sub-agent interns, get the crown and the halo:
+  Opus wears a crown at a gold-trimmed desk, Fable a monocle, Sonnet is an
+  ordinary worker and Haiku is smaller, quicker and wears headphones
+  (`dashboard/office-cast.js`). The notice board carries the day's real
+  numbers and each desk screen lights while its session works. The light
+  follows your own clock, with stars and lamps after hours.
+  Sub-agents show up as interns at their lead's pod, tethered to whoever
+  spawned them, with a glyph for the tool they are using; the Agents rail
+  lists each one with its type, task, model, tokens, tool count and current
+  tool, and keeps finished ones greyed for two hours. Hover a worker for
+  the title, model and how long it has been in that state, plus the last
+  thing the session said when it is asleep. Click to open the session on
+  the Sessions tab. The layout (`dashboard/office-floor.js`), the themes
+  (`office-themes.js`) and the behaviour (`office-sim.js`, a small state
+  machine per worker with steering along walkways) are DOM-free, so node
+  drives them in `tests/office_*_check.js`; `office-3d.js` and the modules
+  it imports draw them, and `office.js` is the controller. three.js is
+  vendored in `dashboard/vendor/three`, so the dashboard works offline.
+  State comes from the statusline alone: every run stamps the session's
+  file under `~/.claude/usage-state/` with the time, working directory,
+  model, transcript path and the Claude process id. No hooks, and nothing
+  in the office ever acts on a session. Thresholds live in `config.json`
   under `office` (`working_seconds`, default 60; `gone_after_seconds`,
   default 86400, used only when no process id is known).
 
@@ -346,6 +343,7 @@ or, with uv (also installs pytest into an isolated environment):
     uv run --group dev pytest -q
 
 The node checks for the Office (`tests/office_*_check.js`) run as part of
-pytest when `node` is on the PATH. GitHub Actions
+pytest when `node` is on the PATH, and `tests/test_office_browser.py` loads
+the office in headless Chrome when Chrome is installed. GitHub Actions
 (`.github/workflows/tests.yml`) runs the whole suite on macOS with Python
 3.9 and 3.13 on every push to `main` and every pull request.

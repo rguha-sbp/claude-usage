@@ -22,6 +22,7 @@ window.OfficeSim = (function () {
 
   var SPEED = 1.7;          // tiles per second, before the model's own multiplier
   var MAX_FORCE = 7;        // tiles per second squared
+  var GRIP = 8;             // per second: how quickly a walker matches the velocity it wants
   var SLOW_RADIUS = 0.5;    // start braking this close to a waypoint
   var ARRIVE = 0.05;        // "there" when this close
   var WALK_TIMEOUT = 14;    // seconds: a stuck walker snaps to its target
@@ -47,6 +48,8 @@ window.OfficeSim = (function () {
 
   // ------------------------------------------------------------- STEER
   /* Arrive: accelerate toward `target`, ramp speed down inside SLOW_RADIUS.
+     GRIP keeps a walker on its walkway: without it a turn at a corner
+     drifts a tile wide, through whatever furniture stands there.
      Returns true once the agent is there. */
   function arrive(agent, target, dt) {
     var top = SPEED * (agent.speed || 1);
@@ -54,11 +57,11 @@ window.OfficeSim = (function () {
     var dist = Math.hypot(dx, dy);
     var fx, fy;
     if (dist < 0.001) {
-      fx = -agent.vel.x; fy = -agent.vel.y;
+      fx = -agent.vel.x * GRIP; fy = -agent.vel.y * GRIP;
     } else {
       var ramped = top * Math.min(dist / SLOW_RADIUS, 1);
-      fx = dx / dist * ramped - agent.vel.x;
-      fy = dy / dist * ramped - agent.vel.y;
+      fx = (dx / dist * ramped - agent.vel.x) * GRIP;
+      fy = (dy / dist * ramped - agent.vel.y) * GRIP;
     }
     var f = Math.hypot(fx, fy);
     if (f > MAX_FORCE) { fx *= MAX_FORCE / f; fy *= MAX_FORCE / f; }

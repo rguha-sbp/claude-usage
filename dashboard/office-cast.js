@@ -82,8 +82,8 @@ window.OfficeCast = (function () {
   }
 
   /* An intern's lanyard: the same colour for the same agent type, always. */
-  var BADGES = ['hsl(200 70% 48%)', 'hsl(150 55% 40%)', 'hsl(32 85% 50%)',
-                'hsl(280 50% 56%)', 'hsl(350 65% 52%)', 'hsl(48 85% 45%)'];
+  var BADGES = ['hsl(200, 70%, 48%)', 'hsl(150, 55%, 40%)', 'hsl(32, 85%, 50%)',      // commas: three.js
+                'hsl(280, 50%, 56%)', 'hsl(350, 65%, 52%)', 'hsl(48, 85%, 45%)'];      // reads them too
   function badgeOf(type) { return BADGES[hash(String(type || '')) % BADGES.length]; }
 
   return { TIERS: TIERS, tierOf: tierOf, internTierOf: internTierOf, skyOf: skyOf, SKIES: SKIES,

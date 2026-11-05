@@ -7,6 +7,7 @@
 <title>Claude Code usage</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="office.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three/three.module.js" } }</script>
 </head>
 <body>
 <div class="backdrop" aria-hidden="true"><i class="a"></i><i class="b"></i><i class="c"></i></div>
@@ -157,10 +158,15 @@
   <!-- ============ OFFICE ============ -->
   <section class="pane" id="pane-office" role="tabpanel" aria-labelledby="tab-office" tabindex="-1" hidden>
     <article class="glass panel office">
-      <div class="panel-head"><h2>The office</h2><span class="hint" id="office-hint">Waiting for sessions to report in</span></div>
+      <div class="panel-head">
+        <h2>The office</h2><span class="hint" id="office-hint">Waiting for sessions to report in</span>
+        <div class="seg office-theme" role="radiogroup" aria-label="Office theme" id="office-theme"><span class="thumb" aria-hidden="true"></span></div>
+      </div>
       <div class="office-body">
         <div class="office-stage" id="office-stage">
-          <svg class="office-scene" id="office-scene" viewBox="0 0 640 220" role="group" aria-label="Live Claude Code sessions as workers at their desks, one room per project, with their sub-agents as interns beside them"></svg>
+          <div class="office-view" id="office-view"></div>
+          <div class="empty vacant-note"><b>The office is empty</b><span>Workers appear as soon as a Claude Code session reports in through the statusline.</span></div>
+          <ul class="sr-only" id="office-roster" aria-label="Workers on the floor"></ul>
           <div class="office-card" id="office-card" role="tooltip" hidden></div>
         </div>
         <aside class="office-rail" id="office-rail" aria-label="Sessions and their sub-agents">
@@ -168,7 +174,7 @@
           <div class="rail-list" id="office-rail-list"></div>
         </aside>
       </div>
-      <div class="foot"><span>One worker per running session, rooms by project. A worker types while its session is busy and sleeps once it has been quiet for a minute; sleepers stay at their desks, and workers take the odd break at the water cooler or the canteen on the plaza. Opus and Fable sessions are dressed for it. The light follows your clock. Select a worker to open the session. Sub-agents stand beside their lead as interns, tethered to whoever spawned them; the Agents rail lists every one with its model, tokens, tools and what it is doing.</span></div>
+      <div class="foot"><span>One worker per running session on an open-plan floor, a neighbourhood per project. A worker types while its session is busy and dozes at the desk once it has been quiet for a minute; workers take the odd break at the water cooler, the kitchen or the lounge, and wave goodbye at the door when the session ends. Opus and Fable sessions are dressed for it. The light follows your clock, and the picker above switches the floor between Studio, Loft and Greenhouse. Drag to pan, scroll to zoom, select a worker to open the session. Sub-agents stand beside their lead as interns, tethered to whoever spawned them; the Agents rail lists every one with its model, tokens, tools and what it is doing.</span></div>
     </article>
   </section>
 
@@ -180,10 +186,10 @@
 <script src="format.js"></script>
 <script src="app.js"></script>
 <script src="office-cast.js"></script>
-<script src="office-world.js"></script>
+<script src="office-themes.js"></script>
+<script src="office-floor.js"></script>
 <script src="office-sim.js"></script>
-<script src="office-figures.js"></script>
 <script src="office-rail.js"></script>
-<script src="office.js"></script>
+<script type="module" src="office.js"></script>
 </body>
 </html>

@@ -1,349 +1,354 @@
-/* Office tab (spec Sec 12): every live Claude Code session is a worker at a
-   desk in an isometric office, one room per project, with a plaza, a canteen
-   and a server room out front. Reads /api/office; the payload is bound to
-   `data`, a room to `room`, a worker to `worker` (tests/test_dashboard_static.py
-   checks those accesses).
+/* Office tab (spec Sec 15): every live Claude Code session is a worker at a
+   desk on an open-plan office floor, one neighbourhood per project, drawn
+   in three.js. Reads /api/office; the payload is bound to `data`, a room to
+   `room`, a worker to `worker` and a sub-agent to `sub`
+   (tests/test_dashboard_static.py checks those accesses).
 
-   The work is split five ways: office-cast.js says who a worker is and what
-   the light is like, office-world.js lays out the campus and draws it,
-   office-sim.js decides what each worker does and where it stands,
-   office-figures.js draws the figures and office-rail.js the Agents rail.
-   This file is the controller: it fetches, drives the frame loop, places the
-   figures, draws the interns' tethers and owns the hover card and the rail's
-   links. A sub-agent is `sub`, and stands beside its lead as an intern.
-   app.js tells it when the Office pane shows. */
-(function () {
-  'use strict';
+   Who does what:
+   - office-cast.js: who a worker is (tier, tool family) and the daylight.
+   - office-themes.js: the three looks of the floor.
+   - office-floor.js: the layout, from the payload and the theme.
+   - office-sim.js: what each worker does and where it stands.
+   - office-3d.js and the modules it imports: the drawing.
+   - office-rail.js: the Agents rail.
+   This file is the controller: it fetches, feeds the simulation, tells the
+   view what to draw, and owns the hover card, the theme picker, the
+   screen-reader roster and the rail's links. app.js tells it when the
+   Office pane shows. */
+import { OfficeView } from './office-3d.js';
 
-  var esc = window.UsageFormat.esc;
-  var $ = function (id) { return document.getElementById(id); };
-  var POLL_MS = 5000;
-  var reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const { esc, fmtTokens } = window.UsageFormat;
+const Cast = window.OfficeCast, Rail = window.OfficeRail, Floor = window.OfficeFloor, Themes = window.OfficeThemes;
+const $ = (id) => document.getElementById(id);
+const POLL_MS = 5000;
+const INTERN_SCALE = 0.82;
+const THEME_KEY = 'usage.office.theme';
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const params = new URLSearchParams(location.search);
 
-  var World = window.OfficeWorld, Cast = window.OfficeCast, Figures = window.OfficeFigures, Rail = window.OfficeRail;
-  var sim = new window.OfficeSim.Sim({ wander: !reduceMotion });
-  var state = { data: null, timer: null, visible: false, workers: {}, subs: {}, sig: '', railSig: null, els: {}, frame: null, last: 0, ticker: null, linked: '' };
+const sim = new window.OfficeSim.Sim({ wander: !reduceMotion });
+const state = { data: null, timer: null, ticker: null, visible: false, workers: {}, subs: {}, cast: {}, sig: '',
+                railSig: null, rosterSig: '', linked: '', card: null, view: null,
+                theme: Themes.themeOf(params.get('office') || localStorage.getItem(THEME_KEY)) };
 
+// -------------------------------------------------------------- render
+function counts(data) {
+  let total = 0, working = 0;
+  data.rooms.forEach((room) => room.workers.forEach((worker) => {
+    total += 1;
+    if (worker.state === 'working') working += 1;
+  }));
+  return { total, working };
+}
 
-  // -------------------------------------------------------------- render
-  function counts(data) {
-    var total = 0, working = 0;
-    data.rooms.forEach(function (room) {
-      room.workers.forEach(function (worker) { total += 1; if (worker.state === 'working') working += 1; });
-    });
-    return { total: total, working: working };
-  }
+function clock(ts) {
+  return ts ? new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
+}
 
-  function clock(ts) {
-    if (!ts) return '';
-    return new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  }
+/* `?hour=NN` previews another time of day. */
+function sky() {
+  return Cast.skyOf(params.has('hour') ? params.get('hour') : new Date().getHours());
+}
 
-  function empty(stage, svg) {
-    svg.innerHTML = ''; svg.setAttribute('height', '1'); state.sig = ''; state.els = {};
-    stage.insertAdjacentHTML('beforeend', '<div class="empty"><b>The office is empty</b>' +
-      '<span>Workers appear as soon as a Claude Code session reports in through the statusline.</span></div>');
-    sim.sync([], {});
-  }
+function money(v) { return '$' + Number(v || 0).toFixed(2); }
 
-  /* Campus, desks, furniture and name plates are static: redrawn only when
-     the set of workers, the light or the board's numbers change. Workers are
-     live elements the frame loop moves; a seated worker lives in its desk
-     row's layer so a nearer desk covers it, a walking one in the layer above
-     every desk. */
-  function render(data) {
-    state.data = data;
-    renderRail(data);
-    var svg = $('office-scene');
-    var stage = $('office-stage');
-    var n = counts(data);
-    $('office-hint').textContent = n.total
-      ? n.working + ' working · ' + (n.total - n.working) + ' asleep · updated ' + clock(data.generated_at)
-      : 'No session has reported in yet';
-    stage.querySelectorAll('.empty').forEach(function (e) { e.remove(); });
-    if (!n.total) return empty(stage, svg);
+/* The notice board in the kitchen: the day's real numbers (spec Sec 12.7). */
+function boardLines(data, n) {
+  const board = data.board || {};
+  return [
+    { text: 'TODAY', size: 0.8, bold: true, color: '#f2cc8f' },
+    { text: board.unit === 'usd' ? money(board.value) : fmtTokens(board.value) + ' tokens', size: 1.5, bold: true },
+    { text: 'busiest: ' + (board.top_project || 'nobody yet'), size: 0.9 },
+    { text: n.working + ' working · ' + (n.total - n.working) + ' asleep', size: 0.9 }
+  ];
+}
 
-    var maxWidth = Math.max(640, stage.getBoundingClientRect().width || 640);
-    var world = World.build(data, maxWidth);
-    var flat = [];
-    state.workers = {};
-    state.subs = {};
-    data.rooms.forEach(function (room) {
-      room.workers.forEach(function (worker) {
-        state.workers[worker.session_id] = worker;
-        flat.push(worker);
-        (worker.agents || []).forEach(function (sub) {
-          state.subs[worker.session_id + '/' + sub.agent_id] = { worker: worker, sub: sub };
-        });
+/* Interns past the pod's slots: counted on the desk instead. */
+function extraOf(worker) {
+  return (worker.agents || []).filter((sub) => sub.state !== 'done').length - Floor.POD;
+}
+
+function render(data) {
+  state.data = data;
+  renderRail(data);
+  const stage = $('office-stage');
+  const n = counts(data);
+  $('office-hint').textContent = n.total
+    ? n.working + ' working · ' + (n.total - n.working) + ' asleep · updated ' + clock(data.generated_at)
+    : 'No session has reported in yet';
+  stage.classList.toggle('vacant', !n.total);
+  state.workers = {};
+  state.subs = {};
+  const flat = [];
+  data.rooms.forEach((room) => room.workers.forEach((worker) => {
+    state.workers[worker.session_id] = worker;
+    flat.push(worker);
+    (worker.agents || []).forEach((sub) => { state.subs[worker.session_id + '/' + sub.agent_id] = { worker, sub }; });
+  }));
+  const plan = n.total ? Floor.build(data, state.theme) : null;
+  sim.sync(flat, plan ? plan.places : {});
+  remember();
+  if (!plan) { renderRoster(); return; }
+  const light = sky();
+  stage.style.setProperty('--sky-top', light.top);
+  stage.style.setProperty('--sky-bottom', light.bottom);
+  stage.classList.toggle('night', light.stars);
+
+  const view = state.view;
+  if (view) {
+    const sig = state.theme.key + '@' + light.key + '@' + data.rooms.map((room) => room.project + ':' +
+      room.workers.map((worker) => worker.session_id + '/' + Cast.tierOf(worker.model).key + '/' + worker.title + '/' +
+        Math.max(0, extraOf(worker))).join(',')).join('|');
+    if (sig !== state.sig) {
+      state.sig = sig;
+      const desks = {};
+      flat.forEach((worker) => {
+        desks[worker.session_id] = { tier: Cast.tierOf(worker.model), title: worker.title, extra: extraOf(worker) };
       });
-    });
-    sim.sync(flat, world.places);
-
-    var sky = Cast.skyOf(new Date().getHours());
-    var board = data.board || {};
-    var sig = flat.map(function (worker) {
-      var live = (worker.agents || []).filter(function (sub) { return sub.state !== 'done'; }).length;
-      return worker.session_id + ':' + worker.state + ':' + live;
-    }).join('|') + '@' + Math.round(maxWidth) + '@' + sky.key + '@' + board.value + ':' + board.top_project;
-    if (sig === state.sig) return;
-    state.sig = sig;
-    state.els = {};
-
-    var scene = World.draw(world, sky, board, n);
-    svg.setAttribute('viewBox', scene.viewBox);
-    svg.style.width = Math.round(scene.width) + 'px';
-    svg.setAttribute('height', String(Math.round(scene.height)));
-    svg.innerHTML = scene.svg;
-    frame(performance.now(), true);
-  }
-
-  // ---------------------------------------------------------------- rail
-  function renderRail(data) {
-    var sig = Rail.signature(data);
-    if (sig === state.railSig) return;
-    state.railSig = sig;
-    var list = $('office-rail-list');
-    var focused = list.contains(document.activeElement) ? document.activeElement.dataset.agent : null;
-    list.innerHTML = Rail.markup(data, Date.now());
-    list.querySelectorAll('.rail-row').forEach(function (row) {
-      if (row.dataset.agent === state.linked) row.classList.add('linked');
-      if (row.dataset.agent === focused) row.focus();
-    });
-  }
-
-  /* Running clocks tick from the viewer's clock; everything else waits for a poll. */
-  function tick() {
-    var now = Date.now();
-    $('office-rail-list').querySelectorAll('.elapsed[data-to=""]').forEach(function (el) {
-      el.textContent = Rail.duration(el.dataset.from, null, now);
-    });
-  }
-
-  /* The linked agent is remembered: figures and tethers are redrawn every
-     frame and take their `linked` class from here. */
-  function link(id, on) {
-    if (!on && state.linked !== id) return;       // a later link already replaced this one
-    state.linked = on ? id : '';
-    $('office-rail-list').querySelectorAll('.rail-row[data-agent="' + CSS.escape(id) + '"]').forEach(function (el) {
-      el.classList.toggle('linked', on);
-    });
-  }
-
-  // ---------------------------------------------------------- frame loop
-  var AT_DESK = { typing: 1, thinking: 1, dozing: 1, standing: 1 };
-
-  /* What to draw and say for a sim agent, a lead or an intern. */
-  function figureFor(agent) {
-    if (agent.kind === 'intern') {
-      var info = state.subs[agent.id];
-      var doing = info && info.sub.state === 'running' ? info.sub.doing : null;
-      return info ? { html: Figures.intern(info.sub, agent.look, info.worker.session_id), model: info.sub.model,
-                      scale: Figures.INTERN_SCALE, doing: doing, family: Cast.familyOf(doing),
-                      label: info.sub.type + ': ' + info.sub.description } : null;
+      view.setFloor(plan, state.theme, { night: light.lamps, desks }, light);
     }
-    var worker = state.workers[agent.id];
-    return worker ? { html: Figures.lead(worker, agent.look), model: worker.model, scale: 1,
-                      doing: worker.doing, family: Cast.familyOf(worker.doing),
-                      label: worker.title + (worker.state === 'asleep' ? ' (session waiting)' : '') } : null;
+    flat.forEach((worker) => view.scenery.setDesk(worker.session_id, worker.state === 'working'));
+    view.scenery.setBoard(boardLines(data, n));
+    if (reduceMotion && state.visible) view.still();
   }
+  renderRoster();
+}
 
-  function place(agent, el) {
-    var pose = agent.state.pose;
-    var svg = $('office-scene');
-    var layer = AT_DESK[pose]
-      ? svg.querySelector('.seated[data-layer="' + agent.places.room + ':' + agent.places.row + '"]')
-      : svg.querySelector('.mobile');
-    if (layer && el.parentNode !== layer) layer.appendChild(el);
-  }
+/* Who each agent on the floor is, kept until it has walked out: a session
+   that ends leaves the payload at once, but its worker still waves goodbye
+   on the way to the door. */
+function remember() {
+  Object.keys(state.workers).forEach((id) => { state.cast[id] = { model: state.workers[id].model }; });
+  Object.keys(state.subs).forEach((id) => { state.cast[id] = { model: state.subs[id].sub.model, type: state.subs[id].sub.type }; });
+  Object.keys(state.cast).forEach((id) => { if (!sim.agents[id]) delete state.cast[id]; });
+}
 
-  function frame(now, force) {
-    var dt = Math.min(0.05, (now - (state.last || now)) / 1000);
-    state.last = now;
-    if (!force) sim.tick(dt);
-    var svg = $('office-scene');
-    if (!svg.querySelector('.mobile')) return;
-    var live = {};
-    sim.list().forEach(function (agent) {
-      var fig = figureFor(agent);
-      if (!fig) return;
-      live[agent.id] = true;
-      var el = state.els[agent.id];
-      if (!el) {
-        var tpl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        tpl.innerHTML = fig.html;
-        el = tpl.firstChild;
-        state.els[agent.id] = el;
-      }
-      place(agent, el);
-      var p = World.iso(agent.pos.x, agent.pos.y);
-      var pose = agent.state.pose;
-      var fam = fig.family;
-      if ((el.dataset.family || '') !== (fam || '')) { if (el.dataset.family) agent.popped = true; el.dataset.family = fam || ''; }
-      el.setAttribute('transform', 'translate(' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ') scale(' +
-        (Cast.tierOf(fig.model).scale * fig.scale) + ')');
-      el.setAttribute('class', 'worker tier-' + agent.tier + ' ' + pose + (agent.kind === 'intern' ? ' intern' : '') +
-        (fam ? ' tool-' + fam : '') + (agent.leaving ? ' leaving' : '') + (agent.bubble ? ' talking' : '') +
-        (state.linked === agent.id ? ' linked' : ''));
-      el.setAttribute('aria-label', fig.label + ', ' + pose);
-      el.querySelector('.flip').setAttribute('transform', 'scale(' + agent.facing + ',1)');
-      if (agent.popped) {
-        agent.popped = false;
-        el.classList.remove('pop'); void el.getBoundingClientRect(); el.classList.add('pop');
-      }
-    });
-    Object.keys(state.els).forEach(function (id) {
-      if (!live[id]) { state.els[id].remove(); delete state.els[id]; }
-    });
-    drawTethers(svg);
-  }
+// ---------------------------------------------------------------- rail
+function renderRail(data) {
+  const sig = Rail.signature(data);
+  if (sig === state.railSig) return;
+  state.railSig = sig;
+  const list = $('office-rail-list');
+  const focused = list.contains(document.activeElement) ? document.activeElement.dataset.agent : null;
+  list.innerHTML = Rail.markup(data, Date.now());
+  list.querySelectorAll('.rail-row').forEach((row) => {
+    if (row.dataset.agent === state.linked) row.classList.add('linked');
+    if (row.dataset.agent === focused) row.focus();
+  });
+}
 
-  /* A thin line from every intern to whoever spawned it, lead or intern;
-     dashed when the agent runs in the background. Redrawn every frame, there
-     are only ever a handful. */
-  function drawTethers(svg) {
-    var layer = svg.querySelector('.tethers');
-    if (!layer) return;
-    var out = '';
-    sim.list().forEach(function (agent) {
-      if (agent.kind !== 'intern') return;
-      var parent = sim.agents[agent.parentId] || sim.agents[agent.lead];
-      if (!parent) return;
-      var a = World.iso(agent.pos.x, agent.pos.y), b = World.iso(parent.pos.x, parent.pos.y);
-      var lift = parent.kind === 'intern' ? Figures.INTERN_SCALE : 1;     // chest height of the parent
-      out += '<line class="tether' + (agent.background ? ' bg' : '') + (state.linked === agent.id ? ' linked' : '') +
-        '" data-agent="' + esc(agent.id) + '" x1="' + b.x.toFixed(1) + '" y1="' + (b.y - 16 * lift).toFixed(1) +
-        '" x2="' + a.x.toFixed(1) + '" y2="' + (a.y - 12 * Figures.INTERN_SCALE).toFixed(1) + '"/>';
-    });
-    layer.innerHTML = out;
-  }
+/* Running clocks tick from the viewer's clock; everything else waits for a poll. */
+function tick() {
+  $('office-rail-list').querySelectorAll('.elapsed[data-to=""]').forEach((el) => {
+    el.textContent = Rail.duration(el.dataset.from, null, Date.now());
+  });
+}
 
-  function loop(now) {
-    if (!state.visible) { state.frame = null; return; }
-    frame(now, false);
-    state.frame = requestAnimationFrame(loop);
-  }
+/* One agent is linked at a time: its figure wears a ring and its rail row lights up. */
+function link(id, on) {
+  if (!on && state.linked !== id) return;       // a later link already replaced this one
+  state.linked = on ? id : '';
+  $('office-rail-list').querySelectorAll('.rail-row[data-agent="' + CSS.escape(id) + '"]').forEach((el) => {
+    el.classList.toggle('linked', on);
+  });
+  if (state.view) state.view.request();
+}
 
-  // ---------------------------------------------------------------- card
-  function since(ts) {
-    var s = (Date.now() - new Date(ts).getTime()) / 1000;
-    if (s < 90) return 'a moment';
-    if (s < 3600) return Math.round(s / 60) + ' min';
-    if (s < 86400) return Math.round(s / 3600) + ' h';
-    return Math.round(s / 86400) + ' d';
-  }
+// -------------------------------------------------------------- figures
+/* What the view draws for one sim agent, lead or intern. */
+function figureOf(agent) {
+  const who = state.cast[agent.id];
+  if (!who) return null;
+  const intern = agent.kind === 'intern';
+  const info = state.subs[agent.id], worker = state.workers[agent.id];
+  const tier = intern ? Cast.internTierOf(who.model) : Cast.tierOf(who.model);
+  const live = intern ? info && info.sub.state === 'running' && info.sub : worker;
+  const doing = live ? live.doing : null;
+  const badge = intern ? Cast.badgeOf(who.type) : null;
+  const partner = agent.state.partner;
+  const popped = agent.popped;
+  agent.popped = false;
+  return {
+    id: agent.id, key: tier.key + '|' + badge,
+    spec: { id: agent.id, seed: Cast.hash(agent.id), look: agent.look, tier, intern, badge,
+            scale: tier.scale * (intern ? INTERN_SCALE : 1) },
+    pose: agent.state.pose, x: agent.pos.x, y: agent.pos.y, vel: agent.vel, facing: agent.facing,
+    partner: partner ? partner.pos : null, family: Cast.familyOf(doing), talking: agent.bubble,
+    linked: state.linked === agent.id, popped, leaving: agent.leaving,
+    parent: intern ? (sim.agents[agent.parentId] ? agent.parentId : agent.lead) : null, background: agent.background
+  };
+}
 
-  var DOING = { typing: 'typing away', thinking: 'thinking', dozing: 'dozing at the desk', walking: 'on the move',
-                drinking: 'at the water cooler', chatting: 'chatting in the aisle', lounging: 'out at the canteen',
+function figures() { return sim.list().map(figureOf).filter(Boolean); }
+
+// ---------------------------------------------------------------- card
+function since(ts) {
+  const s = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (s < 90) return 'a moment';
+  if (s < 3600) return Math.round(s / 60) + ' min';
+  if (s < 86400) return Math.round(s / 3600) + ' h';
+  return Math.round(s / 86400) + ' d';
+}
+
+const DOING = { typing: 'typing away', thinking: 'thinking', dozing: 'dozing at the desk', walking: 'on the move',
+                drinking: 'at the water cooler', chatting: 'chatting in the aisle', lounging: 'on a break',
                 standing: 'at work beside the desk', handing: 'handing back' };
 
-  function internCard(info) {
-    var sub = info.sub;
-    var running = sub.state === 'running';
-    return '<b>' + esc(sub.type) + '</b><span class="meta">' + esc(sub.description) + '</span>' +
-      '<span class="meta">' + Rail.metaLine(sub, Date.now()) + '</span>' +
-      (running && sub.doing ? '<div class="msg"><small>Doing</small>' + esc(Rail.doingText(sub.doing)) + '</div>' : '');
-  }
+function internCard(info) {
+  const sub = info.sub;
+  const running = sub.state === 'running';
+  return '<b>' + esc(sub.type) + '</b><span class="meta">' + esc(sub.description) + '</span>' +
+    '<span class="meta">' + Rail.metaLine(sub, Date.now()) + '</span>' +
+    (running && sub.doing ? '<div class="msg"><small>Doing</small>' + esc(Rail.doingText(sub.doing)) + '</div>' : '');
+}
 
-  function leadCard(worker) {
-    var agent = sim.agents[worker.session_id];
-    var head = (worker.state === 'working' ? 'Working for ' : 'Quiet for ') + since(worker.since);
-    var doing = agent ? DOING[agent.state.pose] || '' : '';
-    var tool = worker.doing ? worker.doing.tool : '';
-    var running = (worker.agents || []).filter(function (sub) { return sub.state === 'running'; }).length;
-    return '<b>' + esc(worker.title) + '</b><span class="meta">' + esc(head) +
-      (doing ? ' · ' + esc(doing) : '') + (tool ? ' · ' + esc(tool) : '') +
-      (worker.model ? ' · ' + esc(worker.model) : '') + '</span>' +
-      (running ? '<span class="meta">' + running + (running === 1 ? ' intern' : ' interns') + ' running</span>' : '') +
-      (worker.last_message ? '<div class="msg"><small>Waiting on you</small>' + esc(worker.last_message) + '</div>' : '');
-  }
+function leadCard(worker) {
+  const agent = sim.agents[worker.session_id];
+  const head = (worker.state === 'working' ? 'Working for ' : 'Quiet for ') + since(worker.since);
+  const doing = agent ? DOING[agent.state.pose] || '' : '';
+  const tool = worker.doing ? worker.doing.tool : '';
+  const running = (worker.agents || []).filter((sub) => sub.state === 'running').length;
+  return '<b>' + esc(worker.title) + '</b><span class="meta">' + esc(head) +
+    (doing ? ' · ' + esc(doing) : '') + (tool ? ' · ' + esc(tool) : '') +
+    (worker.model ? ' · ' + esc(worker.model) : '') + '</span>' +
+    (running ? '<span class="meta">' + running + (running === 1 ? ' intern' : ' interns') + ' running</span>' : '') +
+    (worker.last_message ? '<div class="msg"><small>Waiting on you</small>' + esc(worker.last_message) + '</div>' : '');
+}
 
-  function showCard(el) {
-    var info = state.subs[el.dataset.agent];
-    var worker = state.workers[el.dataset.agent];
-    if (!info && !worker) return;
-    var card = $('office-card');
-    card.innerHTML = info ? internCard(info) : leadCard(worker);
-    var stage = $('office-stage').getBoundingClientRect();
-    var box = el.getBoundingClientRect();
-    card.hidden = false;
-    var left = box.left - stage.left + box.width / 2 - card.offsetWidth / 2;
-    left = Math.max(0, Math.min(left, stage.width - card.offsetWidth));
-    var top = box.top - stage.top - card.offsetHeight - 8;
-    if (top < 0) top = box.bottom - stage.top + 8;
-    card.style.left = left + 'px';
-    card.style.top = top + 'px';
-  }
+function showCard(id) {
+  const info = state.subs[id], worker = state.workers[id];
+  if (!id || (!info && !worker)) return hideCard();
+  const card = $('office-card');
+  card.innerHTML = info ? internCard(info) : leadCard(worker);
+  card.hidden = false;
+  state.card = id;
+  placeCard(id);
+}
 
-  function hideCard() { $('office-card').hidden = true; }
+/* Above the figure's head, kept inside the stage; below it near the top. */
+function placeCard(id) {
+  const at = state.view && state.view.screenOf(id);
+  if (!at) return;
+  const card = $('office-card');
+  const canvas = state.view.canvas;
+  const left = Math.max(0, Math.min(canvas.offsetLeft + at.x - card.offsetWidth / 2, canvas.offsetWidth - card.offsetWidth));
+  let top = canvas.offsetTop + at.y - card.offsetHeight - 14;
+  if (top < 0) top = canvas.offsetTop + at.y + 40;
+  card.style.left = left + 'px';
+  card.style.top = top + 'px';
+}
 
-  // ------------------------------------------------------------- polling
-  function poll() {
-    fetch('/api/office', { cache: 'no-store' }).then(function (r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    }).then(render).catch(function () {
-      $('office-hint').textContent = 'Could not reach the server; showing the last office';
-    });
-  }
+function hideCard() {
+  $('office-card').hidden = true;
+  state.card = null;
+}
 
-  function setVisible(on) {
-    state.visible = on;
-    clearInterval(state.timer);
-    state.timer = null;
-    clearInterval(state.ticker);
-    state.ticker = on ? setInterval(tick, 1000) : null;
-    if (on) {
-      poll();
-      state.timer = setInterval(poll, POLL_MS);
-      if (!state.frame) { state.last = 0; state.frame = requestAnimationFrame(loop); }
-    }
-  }
+function hover(id) {
+  if (state.card && state.card !== id) link(state.card, false);
+  if (id) { showCard(id); link(id, true); } else hideCard();
+}
 
-  // ----------------------------------------------------------- listeners
-  var scene = $('office-scene');
-  function open(el) { hideCard(); if (window.usageDashboard) window.usageDashboard.openSession(el.dataset.session); }
-  scene.addEventListener('click', function (e) { var w = e.target.closest('.worker'); if (w) open(w); });
-  scene.addEventListener('keydown', function (e) {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    var w = e.target.closest('.worker');
-    if (w) { e.preventDefault(); open(w); }
-  });
-  scene.addEventListener('mouseover', function (e) {
-    var w = e.target.closest('.worker');
-    if (w) { showCard(w); link(w.dataset.agent, true); }
-  });
-  scene.addEventListener('mouseout', function (e) {
-    var w = e.target.closest('.worker');
-    if (w) { hideCard(); link(w.dataset.agent, false); }
-  });
-  var rail = $('office-rail-list');
-  rail.addEventListener('mouseover', function (e) { var r = e.target.closest('.rail-row'); if (r) link(r.dataset.agent, true); });
-  rail.addEventListener('mouseout', function (e) { var r = e.target.closest('.rail-row'); if (r) link(r.dataset.agent, false); });
-  rail.addEventListener('focusin', function (e) { var r = e.target.closest('.rail-row'); if (r) link(r.dataset.agent, true); });
-  rail.addEventListener('focusout', function (e) { var r = e.target.closest('.rail-row'); if (r) link(r.dataset.agent, false); });
-  rail.addEventListener('click', function (e) {
-    var r = e.target.closest('.rail-row');
-    if (r && window.usageDashboard) window.usageDashboard.openSession(r.dataset.session);
-  });
-  $('office-rail-toggle').addEventListener('click', function () {
-    var aside = $('office-rail');
-    var collapsed = aside.classList.toggle('collapsed');
-    this.setAttribute('aria-expanded', String(!collapsed));
-    this.textContent = collapsed ? 'Show' : 'Hide';
-    if (state.data) { state.sig = ''; render(state.data); }      // the stage got wider or narrower
-  });
-  scene.addEventListener('focusin', function (e) { var w = e.target.closest('.worker'); if (w) { showCard(w); link(w.dataset.agent, true); } });
-  scene.addEventListener('focusout', function (e) {
-    var w = e.target.closest('.worker');
-    hideCard();
-    if (w) link(w.dataset.agent, false);
-  });
-  document.addEventListener('usage:pane', function (e) { setVisible(e.detail === 'office'); });
-  var resizeTimer = null;
-  window.addEventListener('resize', function () {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(function () { if (state.visible && state.data) { state.sig = ''; render(state.data); } }, 120);
-  });
+function open(id) {
+  hideCard();
+  const intern = state.subs[id];
+  window.usageDashboard.openSession(intern ? intern.worker.session_id : id);
+}
 
-  setVisible(!$('pane-office').hidden);
-})();
+// -------------------------------------------------------------- roster
+/* The canvas is one picture; screen readers and keyboards get a list of
+   every worker instead, in the order of the rooms. */
+function renderRoster() {
+  const rows = [];
+  sim.list().forEach((agent) => {
+    const info = state.subs[agent.id], worker = state.workers[agent.id];
+    if (worker) rows.push([agent.id, worker.title + ', ' + (worker.state === 'working' ? 'working' : 'waiting') +
+      (worker.model ? ', ' + worker.model : '')]);
+    else if (info) rows.push([agent.id, 'Intern ' + info.sub.type + ' for ' + info.worker.title + ': ' + info.sub.description]);
+  });
+  const sig = JSON.stringify(rows);
+  if (sig === state.rosterSig) return;
+  state.rosterSig = sig;
+  $('office-roster').innerHTML = rows.map((r) =>
+    '<li><button type="button" data-agent="' + esc(r[0]) + '">' + esc(r[1]) + '</button></li>').join('');
+}
+
+// --------------------------------------------------------------- theme
+function renderThemes() {
+  const seg = $('office-theme');
+  seg.insertAdjacentHTML('beforeend', Themes.THEMES.map((t) =>
+    '<button type="button" role="radio" aria-checked="false" aria-selected="false" data-office="' + t.key + '">' +
+    esc(t.label) + '</button>').join(''));
+  markTheme();
+}
+
+function markTheme() {
+  const seg = $('office-theme');
+  window.usageDashboard.selectSeg(seg, seg.querySelector('[data-office="' + state.theme.key + '"]'));
+}
+
+function chooseTheme(key) {
+  state.theme = Themes.themeOf(key);
+  try { localStorage.setItem(THEME_KEY, state.theme.key); } catch (e) { /* private mode */ }
+  markTheme();
+  if (state.data) render(state.data);
+}
+
+// ------------------------------------------------------------- polling
+function poll() {
+  fetch('/api/office', { cache: 'no-store' }).then((r) => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(render).catch(() => {
+    $('office-hint').textContent = 'Could not reach the server; showing the last office';
+  });
+}
+
+function setVisible(on) {
+  state.visible = on;
+  clearInterval(state.timer);
+  clearInterval(state.ticker);
+  state.timer = on ? setInterval(poll, POLL_MS) : null;
+  state.ticker = on ? setInterval(tick, 1000) : null;
+  if (on) { poll(); markTheme(); }
+  if (state.view) state.view.setActive(on);
+}
+
+// ---------------------------------------------------------------- boot
+try {
+  state.view = new OfficeView($('office-view'), {
+    advance: (dt) => sim.tick(dt), figures, pick: open, hover,
+    drawn: () => { if (state.card) placeCard(state.card); }
+  }, reduceMotion);
+  state.view.canvas.setAttribute('role', 'img');
+  state.view.canvas.setAttribute('aria-label', 'The office floor: live Claude Code sessions as workers at their desks, ' +
+    'one neighbourhood per project, with their sub-agents as interns beside them. The list below names every worker.');
+} catch (e) {
+  $('office-view').innerHTML = '<div class="empty"><b>The office needs WebGL</b>' +
+    '<span>This browser could not start WebGL, so the floor cannot be drawn. The Agents rail still lists every session.</span></div>';
+}
+
+renderThemes();
+$('office-theme').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (b) chooseTheme(b.dataset.office);
+});
+const roster = $('office-roster');
+roster.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) open(b.dataset.agent); });
+roster.addEventListener('focusin', (e) => { const b = e.target.closest('button'); if (b) hover(b.dataset.agent); });
+roster.addEventListener('focusout', () => hover(null));
+const rail = $('office-rail-list');
+rail.addEventListener('mouseover', (e) => { const r = e.target.closest('.rail-row'); if (r) link(r.dataset.agent, true); });
+rail.addEventListener('mouseout', (e) => { const r = e.target.closest('.rail-row'); if (r) link(r.dataset.agent, false); });
+rail.addEventListener('focusin', (e) => { const r = e.target.closest('.rail-row'); if (r) link(r.dataset.agent, true); });
+rail.addEventListener('focusout', (e) => { const r = e.target.closest('.rail-row'); if (r) link(r.dataset.agent, false); });
+rail.addEventListener('click', (e) => {
+  const r = e.target.closest('.rail-row');
+  if (r) window.usageDashboard.openSession(r.dataset.session);
+});
+$('office-rail-toggle').addEventListener('click', function () {
+  const collapsed = $('office-rail').classList.toggle('collapsed');
+  this.setAttribute('aria-expanded', String(!collapsed));
+  this.textContent = collapsed ? 'Show' : 'Hide';
+});
+document.addEventListener('usage:pane', (e) => setVisible(e.detail === 'office'));
+setVisible(!$('pane-office').hidden);

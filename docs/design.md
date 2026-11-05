@@ -435,3 +435,46 @@ Requested on 2026-11-05: idle sessions and sub-agents must look asleep, only lea
 - **Tips.** Each tip has `doc`, a `https://code.claude.com/docs/en/...#section` link, and its text was rewritten to say only what that page says (checked 2026-11-05): compacting at a natural break (prompt-caching), subagents keeping verbose output out of the main context while their own calls still count, the cache lifetime of one hour on a subscription and five minutes on an API key, `/clear` between unrelated tasks, specific prompts needing fewer file reads, `/effort` for simpler tasks, and loaded skills staying in the conversation.
 - **Hardening.** The server answers 403 unless `Host` is `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding). The installer shell-quotes the repo path in the statusline and hook commands and still recognises its own hook when quoted. `ccusage` is pinned to `20.0.48` instead of `@latest`.
 - **CI.** `.github/workflows/tests.yml` runs pytest (which drives the node checks) on macOS with Python 3.9 and 3.13.
+
+## 15. Revision 2026-11-05: the Office in three.js
+
+Requested on 2026-11-05: replace the SVG campus with a three.js open-plan office floor, decorate it heavily but cleanly, offer a few themes to switch between, and make the people look like people. The server and the `/api/office` payload do not change. This replaces the SVG drawing of sections 12 and 13: `office-world.js`, `office-figures.js` and their node checks are gone.
+
+### 15.1 The floor plan
+
+`dashboard/office-floor.js` `build(data, theme)` is pure (no DOM, no three.js) and returns a plan in tile space (one tile is about a metre; x across, y from the back wall to the front):
+
+- a back band (server room, meeting room, kitchen, lounge, library), the main corridor, then bands of neighbourhoods, one per project, and a right column (a second meeting room, the printer corner, reception and the entrance door);
+- a neighbourhood is a fenced block of desk units: the desk, the lead's chair, and a pod of `POD` (4) standing slots for interns; a sign names the project and a water cooler stands at the end of the first row;
+- `places[session_id]` are the spots the simulation walks between (seat, cooler, two meeting spots, the pod, the handoff, the door and the canteen spots), each `{x, y, lane, via}` with every lane a horizontal aisle line;
+- decor is placed last and only where it touches no desk, partition, walk or spot. The floor grows to fit, the figures never shrink. Places do not depend on the theme.
+
+### 15.2 The simulation on the floor
+
+`office-sim.js` keeps its contract (12.3, 13.4, 14). One change: `GRIP = 8` in the `arrive` steering. Without it a walker overshot at a corner and cut across furniture; `tests/office_floor_check.js` drives the simulation over real floors and fails on anyone who walks through a desk or a piece of decor.
+
+### 15.3 Themes
+
+`office-themes.js` is pure data: Studio (pale wood planks, planter partitions), Loft (concrete, brick partitions, warm lamps) and Greenhouse (terracotta tiles, vine partitions, a planted bed). A theme sets the palette by role, the floor pattern, the partition style, the decor weights and density, the centrepiece and the light. People are not themed. The picker in the panel head stores the choice in `localStorage` (`usage.office.theme`); `?office=<key>` previews a theme and `?hour=<0-23>` a time of day.
+
+### 15.4 Scenery
+
+- `office-kit.js`: unit shapes, the `Batch` that turns every static part into one `InstancedMesh` per (layer, shape), the material cache and canvas textures.
+- `office-decor.js`: one builder per decor kind and the desk.
+- `office-scenery.js`: the floor canvas, walls, windows, partitions, rooms, signs, the notice board and the desk screens. `setDesk(id, working)` lights a screen and `setBoard(lines)` repaints the board without a rebuild.
+
+Static shadows are drawn once per rebuild (`shadowMap.autoUpdate = false`); figures use blob shadows.
+
+### 15.5 People
+
+`office-people.js` `Person` is a jointed figure (hips, knees, spine, shoulders, elbows, hands, a nodding head) with hair styles, glasses, a beard on some leads, and the tier's headgear (crown, monocle, headphones). Each simulation pose has a pose in `POSES` (typing, thinking, dozing, walking, waving, drinking, lounging, chatting, standing, handing, gone), blended over 0.35 s, with props (a cup, a tablet, a folder). A tool glyph, a speech bubble and z's float above the head. A leaver waves near the door.
+
+### 15.6 The view
+
+`office-3d.js` `OfficeView` owns the renderer, an orthographic isometric camera fitted to the floor, the light (hemisphere plus a sun, scaled by the theme and the viewer's clock), picking, drag to pan and wheel to zoom (1 to 4, about the pointer). A rebuild of a floor with the same footprint keeps the reader's pan and zoom. The loop runs only while the Office pane and the page are visible: full rate while anyone walks or the pointer drags, about 15 frames a second otherwise. Under reduced motion it draws one frame per update. Without WebGL the pane says so.
+
+three r187 is vendored in `dashboard/vendor/three` (the npm tarball's `three.module.js`, `three.core.js` and `LICENSE`, with sha256 values in `VERSION`) and resolved through an import map, so the dashboard needs no network.
+
+### 15.7 Controller, accessibility and tests
+
+`office.js` is an ES module: it fetches every 5 s, feeds the simulation and the view, and owns the hover card, the theme picker, the Agents rail links and a screen-reader roster of buttons (one per worker). Tests: `tests/office_floor_check.js` (every floor size in every theme), `tests/office_themes_check.js` (complete themes, names the scenery draws), static checks for the import map and the vendored hashes, and `tests/test_office_browser.py`, which loads the office in headless Chrome against the real server and fails without a rendered frame or on a console error (skipped without Chrome).
