@@ -10,13 +10,14 @@ permissions:
 
 jobs:
   test:
-    # The tool targets macOS (launchd, terminal-notifier, the system python3).
+    # The tool targets macOS (launchd, terminal-notifier).
     runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
-        # 3.9 is the macOS system python3 the statusline runs on; 3.13 is current.
-        python: ["3.9", "3.13"]
+        # requires-python is >=3.15 and install.sh pins the statusline to a
+        # 3.15 interpreter, so 3.15 is the only version worth testing.
+        python: ["3.15"]
     steps:
       - uses: actions/checkout@v4
         with:

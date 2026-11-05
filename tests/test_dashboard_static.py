@@ -279,6 +279,18 @@ def test_three_is_vendored_and_mapped_offline():
         assert hashlib.sha256((vendor / name).read_bytes()).hexdigest() == digest, name
 
 
+def test_npm_manifest_pins_the_vendored_three():
+    """package.json exists so Dependabot can see the vendored three.js. When a
+    bump lands there, this fails until scripts/vendor_three.py re-vendors."""
+    vendored = re.match(r"three (\S+)\nsource \S+ \((\S+)\)\n", (DASH / "vendor" / "three" / "VERSION").read_text())
+    manifest = json.loads((REPO_ROOT / "package.json").read_text())
+    locked = json.loads((REPO_ROOT / "package-lock.json").read_text())["packages"]
+    assert manifest["dependencies"]["three"] == vendored[1]
+    assert locked[""]["dependencies"]["three"] == vendored[1]
+    assert locked["node_modules/three"]["version"] == vendored[1]
+    assert locked["node_modules/three"]["integrity"] == vendored[2]
+
+
 def test_office_people_pose_every_sim_state():
     """Every pose the simulation can set has a pose in office-people.js, so
     no state renders as a figure frozen in the default stance."""

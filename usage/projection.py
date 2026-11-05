@@ -6,9 +6,10 @@ a day is a closed total compared with the previous day, and its chart series
 is per hour instead of per day.
 """
 import calendar
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 from .store import Store, weighted
 
@@ -22,7 +23,7 @@ HOURS = ["%02d" % h for h in range(24)]
 class Trend:
     direction: str
     verdict: str
-    delta: Optional[float]
+    delta: float | None
 
 
 @dataclass
@@ -48,17 +49,17 @@ class PeriodSummary:
     days_elapsed: int
     days_in_period: int
     previous_period: str
-    previous_total: Optional[float]
+    previous_total: float | None
     previous_days: int
     spend_trend: Trend
     over_value: float
-    over_share: Optional[float]
-    previous_over_share: Optional[float]
+    over_share: float | None
+    previous_over_share: float | None
     over_trend: Trend
-    top_session: Optional[Dict[str, Any]]
-    series: List[Point]
-    model_split: Dict[str, float]
-    token_split: Dict[str, int]
+    top_session: dict[str, Any] | None
+    series: list[Point]
+    model_split: dict[str, float]
+    token_split: dict[str, int]
 
 
 def kind_of(period: str) -> str:
@@ -70,7 +71,7 @@ def prev_month(month: str) -> str:
     return "%04d-%02d" % ((y - 1, 12) if m == 1 else (y, m - 1))
 
 
-def month_range(month: str) -> Tuple[date, date]:
+def month_range(month: str) -> tuple[date, date]:
     y, m = int(month[:4]), int(month[5:7])
     return date(y, m, 1), date(y, m, calendar.monthrange(y, m)[1])
 
@@ -81,19 +82,19 @@ def prev_period(period: str) -> str:
     return prev_month(period)
 
 
-def period_range(period: str) -> Tuple[date, date]:
+def period_range(period: str) -> tuple[date, date]:
     if kind_of(period) == "day":
         d = date.fromisoformat(period)
         return d, d
     return month_range(period)
 
 
-def pace_7d(values_by_day: Dict[str, float], today: date) -> float:
+def pace_7d(values_by_day: dict[str, float], today: date) -> float:
     days = [(today - timedelta(days=i)).isoformat() for i in range(7)]
     return sum(values_by_day.get(d, 0.0) for d in days) / 7.0
 
 
-def trend(current: Optional[float], previous: Optional[float], previous_days: int,
+def trend(current: float | None, previous: float | None, previous_days: int,
           kind: str, label_up: str, label_down: str, label_flat: str,
           min_days: int = MIN_PREVIOUS_DAYS) -> Trend:
     if current is None or previous is None or previous_days < min_days:
@@ -117,12 +118,12 @@ def trend(current: Optional[float], previous: Optional[float], previous_days: in
 class Buckets:
     """Rollup rows of one period summed per bucket (a day of a month, or an
     hour of a day), plus the period's model and token splits."""
-    value: Dict[str, float]
-    over: Dict[str, float]
-    tokens: Dict[str, int]
-    over_tokens: Dict[str, int]
-    model_split: Dict[str, float]
-    token_split: Dict[str, int]
+    value: dict[str, float]
+    over: dict[str, float]
+    tokens: dict[str, int]
+    over_tokens: dict[str, int]
+    model_split: dict[str, float]
+    token_split: dict[str, int]
     days_with_data: int
 
     def total(self) -> float:
@@ -132,12 +133,12 @@ class Buckets:
 def _bucket(store: Store, period: str, cost_available: bool) -> Buckets:
     rows = store.rollup(period)
     by_hour = kind_of(period) == "day"
-    key: Callable[[Dict[str, Any]], str] = (lambda r: "%02d" % r["hour"]) if by_hour else (lambda r: r["day"])
-    ctx: Dict[str, int] = {}
-    tokens: Dict[str, int] = {}
-    over_tokens: Dict[str, int] = {}
-    weight: Dict[str, float] = {}
-    model_tokens: Dict[str, float] = {}
+    key: Callable[[dict[str, Any]], str] = (lambda r: "%02d" % r["hour"]) if by_hour else (lambda r: r["day"])
+    ctx: dict[str, int] = {}
+    tokens: dict[str, int] = {}
+    over_tokens: dict[str, int] = {}
+    weight: dict[str, float] = {}
+    model_tokens: dict[str, float] = {}
     token_split = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}
     days_seen = set()
     for r in rows:
@@ -156,7 +157,7 @@ def _bucket(store: Store, period: str, cost_available: bool) -> Buckets:
         token_split["output"] += r["output_tokens"]
     if cost_available:
         costs = store.daily_costs(period)
-        model_split: Dict[str, float] = {}
+        model_split: dict[str, float] = {}
         for v in costs.values():
             for m, c in v.items():
                 if m != "*":
@@ -240,7 +241,7 @@ def compute_period(store: Store, period: str, today: date, threshold: int, cost_
                "title": best.get("title") or best.get("first_prompt") or best["session_id"],
                "value": v, "share": (v / to_date) if to_date else 0.0}
 
-    series: List[Point] = []
+    series: list[Point] = []
     if kind == "month":
         d = first
         while d <= last:

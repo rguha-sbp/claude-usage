@@ -14,7 +14,9 @@ instead of dollars; nothing is estimated or guessed.
 
 ## Requirements
 
-- Python 3.9 or later. There are no Python dependencies.
+- Python 3.15 or later. There are no Python dependencies.
+- [uv](https://docs.astral.sh/uv/). `install.sh` uses it to find or
+  install Python 3.15, and `uv run` picks 3.15 from `.python-version`.
 - Claude Code, which writes the transcripts under `~/.claude`.
 - Optional: Node, so that `npx ccusage` can produce dollar figures.
 - Optional, macOS only: `terminal-notifier` and `jq` for the desktop
@@ -35,12 +37,13 @@ seconds; `uv run usage refresh` runs one parse-and-cost pass on demand, and
 `uv run usage report` prints a plain-text table of the current month's
 sessions to the terminal.
 
-Without uv, plain Python 3.9+ works the same way, no dependencies to
-install:
+Without uv, any Python 3.15 interpreter works the same way, no
+dependencies to install. The macOS `python3` is 3.9, which is too old, so
+name the interpreter explicitly:
 
-    python3 -m usage serve
-    python3 -m usage refresh
-    python3 -m usage report
+    python3.15 -m usage serve
+    python3.15 -m usage refresh
+    python3.15 -m usage report
 
 ## What the four tabs show
 
@@ -149,17 +152,23 @@ the next statusline invocation; nothing needs to be reparsed or restarted.
     ./install.sh
 
 This is the only part of the project that touches anything outside this
-repo. It runs in five steps, each reporting OK or WARN so one missing
-prerequisite does not stop the rest:
+repo. It runs in six steps. The first one must succeed. Each later step
+reports OK or WARN, so one missing prerequisite does not stop the rest:
 
-1. Runs `python3 -m usage.install_settings` against
+1. Finds a Python 3.15 interpreter with `uv python find --system 3.15`.
+   If there is none, it runs `uv python install 3.15` and looks again. If
+   uv is not installed, or no 3.15 can be found or installed, it prints
+   FAIL and stops with exit 1.
+2. Runs `<python> -m usage.install_settings` with that interpreter against
    `~/.claude/settings.json`. `CLAUDE_CONFIG_DIR`, when set, overrides
    `config.json`'s `claude_dir` for every component (installer, hook,
    statusline and dashboard), so if it is set this step writes
    `$CLAUDE_CONFIG_DIR/settings.json` instead. This step:
    - backs up the existing file first, to
      `~/.claude/settings.json.bak-YYYYMMDD-HHMMSS`;
-   - sets `statusLine` to run `statusline/statusline.py` from this repo;
+   - sets `statusLine` to run `statusline/statusline.py` from this repo
+     with the absolute path of that interpreter (re-running the installer
+     replaces an older `python3 ...` entry);
    - adds a `PreCompact` hook (matcher `auto`) that runs
      `hooks/precompact-notify.sh`, replacing any earlier registration of
      that same hook script and leaving every other hook and settings key
@@ -173,15 +182,15 @@ prerequisite does not stop the rest:
    If the existing settings file is not valid JSON, this step fails,
    prints one line explaining why, and does not touch the file; every
    later step still runs, but `install.sh` exits 1 at the end.
-2. Installs `terminal-notifier` with Homebrew if it is not already at
+3. Installs `terminal-notifier` with Homebrew if it is not already at
    `/opt/homebrew/bin/terminal-notifier` (prints manual install
    instructions if Homebrew itself is missing).
-3. Checks that `npx -y ccusage@20.0.48 --version` prints a version; if not,
+4. Checks that `npx -y ccusage@20.0.48 --version` prints a version; if not,
    this is a warning, not a failure — the dashboard still works, showing
    tokens instead of dollars.
-4. Creates `~/.claude/usage-state/`, where the statusline keeps its
+5. Creates `~/.claude/usage-state/`, where the statusline keeps its
    per-session notification state.
-5. Prints the start command, the dashboard URL, and a one-line reminder
+6. Prints the start command, the dashboard URL, and a one-line reminder
    about the one-time notification permission (see below).
 
 Start a new Claude Code session afterwards so it picks up the new
@@ -196,7 +205,7 @@ Settings → Notifications**, find `terminal-notifier`, and allow it. You can
 also test manually with a fake statusline payload above the warn threshold:
 
     echo '{"session_id":"test","session_name":"notification test","context_window":{"context_window_size":1000000,"used_percentage":19}}' \
-      | python3 statusline/statusline.py
+      | "$(uv python find --system 3.15)" statusline/statusline.py
 
 ## What the notifications say, and when
 
@@ -329,6 +338,29 @@ it never parses transcripts or calls the network, so it stays fast.
 `hooks/precompact-notify.sh` is the one piece that runs as a Claude Code
 hook rather than being invoked by this project.
 
+## Dependencies and updates
+
+Dependabot (`.github/dependabot.yml`) checks for updates every week. It
+covers these ecosystems:
+
+- npm: three.js. The dashboard serves a copy vendored in
+  `dashboard/vendor/three`. The root `package.json` pins that version so
+  Dependabot can see it. Nothing runs `npm install`.
+- uv: pytest, through `uv.lock`.
+- github-actions: the actions in `.github/workflows/tests.yml`.
+
+A Dependabot pull request that bumps `three` fails CI until you re-vendor.
+To re-vendor, check out its branch and run:
+
+    python3.15 scripts/vendor_three.py
+
+You can also use `uv run scripts/vendor_three.py`. The script downloads the
+tarball, checks it against the sha512 in `package-lock.json`, and rewrites
+the vendored files and `VERSION`. Commit the result.
+
+Dependabot alerts and security updates are off until you turn them on. Go
+to **Settings → Code security** in the GitHub repository and enable both.
+
 ## Design
 
 `docs/design.md` is the design document. Code comments such as
@@ -336,14 +368,12 @@ hook rather than being invoked by this project.
 
 ## Tests
 
-    python3 -m pytest -q
+    uv run --locked pytest -q
 
-or, with uv (also installs pytest into an isolated environment):
-
-    uv run --group dev pytest -q
+This installs pytest from `uv.lock` into `.venv`, on Python 3.15.
 
 The node checks for the Office (`tests/office_*_check.js`) run as part of
 pytest when `node` is on the PATH, and `tests/test_office_browser.py` loads
 the office in headless Chrome when Chrome is installed. GitHub Actions
 (`.github/workflows/tests.yml`) runs the whole suite on macOS with Python
-3.9 and 3.13 on every push to `main` and every pull request.
+3.15 on every push to `main` and every pull request.

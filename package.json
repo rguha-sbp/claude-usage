@@ -1,0 +1,8 @@
+{
+  "name": "claude-usage-dashboard",
+  "private": true,
+  "description": "Not built or installed. Declares the three.js copy vendored in dashboard/vendor/three so Dependabot can track it; re-vendor with scripts/vendor_three.py.",
+  "dependencies": {
+    "three": "0.187.0"
+  }
+}

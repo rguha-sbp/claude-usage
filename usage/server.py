@@ -13,7 +13,6 @@ import re
 import threading
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .config import Config
@@ -48,7 +47,7 @@ def _content_type(path) -> str:
 class _Handler(BaseHTTPRequestHandler):
     server_version = "UsageDashboard/1.0"
 
-    def __init__(self, *args, app: "UsageServer", **kwargs):
+    def __init__(self, *args, app: UsageServer, **kwargs):
         self.app = app
         super().__init__(*args, **kwargs)
 
@@ -137,7 +136,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 class UsageServer:
     def __init__(self, cfg: Config, store: Store, runner: Runner = default_runner,
-                port: Optional[int] = None) -> None:
+                port: int | None = None) -> None:
         self.cfg = cfg
         self.store = store
         self.runner = runner
@@ -145,8 +144,8 @@ class UsageServer:
         self.office = Office(cfg.state_dir, cfg.claude_dir, cfg.office_working_seconds, cfg.office_gone_after_seconds)
         self.last_warnings = []
         self._stop = threading.Event()
-        self._refresh_thread: Optional[threading.Thread] = None
-        self._serve_thread: Optional[threading.Thread] = None
+        self._refresh_thread: threading.Thread | None = None
+        self._serve_thread: threading.Thread | None = None
         bind_port = cfg.port if port is None else port
 
         def handler(*args, **kwargs):

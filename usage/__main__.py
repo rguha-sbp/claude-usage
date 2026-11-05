@@ -1,4 +1,4 @@
-"""CLI: `python3 -m usage serve|refresh|report` (spec §4.6)."""
+"""CLI: `python3.15 -m usage serve|refresh|report` (spec §4.6)."""
 import argparse
 import logging
 import sys

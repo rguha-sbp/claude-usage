@@ -9,10 +9,11 @@ has not been seen for a day, is left out. No database is involved.
 """
 import json
 import os
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any
 
 from .agents import AgentReader, doing_of
 from .parser import _as_dict, _safe_parse_ts, _text_of, derive_project
@@ -31,12 +32,12 @@ def process_alive(pid: int) -> bool:
     return True
 
 
-def tail_activity(path: Path, claude_dir: Path) -> Dict[str, Any]:
+def tail_activity(path: Path, claude_dir: Path) -> dict[str, Any]:
     """From a transcript's final TAIL_BYTES: the text of the last assistant
     record that has any (truncated to MESSAGE_CHARS) and what the session is
     doing now (`doing_of` of the last assistant record that says). Both None
     when the file is missing, unreadable or outside `claude_dir`."""
-    out: Dict[str, Any] = {"last_message": None, "doing": None}
+    out: dict[str, Any] = {"last_message": None, "doing": None}
     try:
         resolved = path.resolve()
         if not resolved.is_relative_to(claude_dir.resolve()):
@@ -77,9 +78,9 @@ class Office:
         self.gone_after_seconds = gone_after_seconds
         self.alive = alive
         self.reader = AgentReader(claude_dir, working_seconds)
-        self._streak_start: Dict[str, str] = {}   # session_id -> ISO `seen` that began the streak
+        self._streak_start: dict[str, str] = {}   # session_id -> ISO `seen` that began the streak
 
-    def _states(self) -> List[Dict[str, Any]]:
+    def _states(self) -> list[dict[str, Any]]:
         out = []
         try:
             files = sorted(self.state_dir.glob("*.json"))
@@ -94,7 +95,7 @@ class Office:
                 out.append(state)
         return out
 
-    def _worker(self, state: Dict[str, Any], now: datetime) -> Optional[Dict[str, Any]]:
+    def _worker(self, state: dict[str, Any], now: datetime) -> dict[str, Any] | None:
         seen = _safe_parse_ts(str(state.get("seen")))
         if seen is None:
             return None
@@ -107,7 +108,7 @@ class Office:
         elif now - seen > timedelta(seconds=self.gone_after_seconds):
             self._streak_start.pop(sid, None)
             return None
-        act: Dict[str, Any] = {"last_message": None, "doing": None}
+        act: dict[str, Any] = {"last_message": None, "doing": None}
         agents, hidden = [], 0
         if state.get("transcript_path"):
             transcript = Path(str(state["transcript_path"]))
@@ -129,10 +130,10 @@ class Office:
                 "doing": act["doing"] if working else None,
                 "agents": [asdict(a) for a in agents], "agents_hidden": hidden}
 
-    def payload(self, now: Optional[datetime] = None) -> Dict[str, Any]:
+    def payload(self, now: datetime | None = None) -> dict[str, Any]:
         now = now or datetime.now(timezone.utc)
-        rooms: Dict[str, Dict[str, Any]] = {}
-        read: Set[Path] = set()
+        rooms: dict[str, dict[str, Any]] = {}
+        read: set[Path] = set()
         for state in self._states():
             worker = self._worker(state, now)
             if worker is None:

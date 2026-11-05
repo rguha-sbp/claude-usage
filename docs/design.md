@@ -55,7 +55,7 @@ usage/                Python package (stdlib only)
   projection.py       month-to-date, projection, last-month comparison, trends
   tips.py             heuristics -> per-session and month-level tips with savings
   server.py           http.server: static files + /api/summary, background refresh
-  __main__.py         `python3 -m usage serve|refresh|report`
+  __main__.py         `python3.15 -m usage serve|refresh|report`
 dashboard/
   index.html, app.js, styles.css
 statusline/
@@ -135,7 +135,7 @@ Month-level tips aggregate: total approximate saving from compact-earlier across
 
 ### 4.6 Server and page
 
-`python3 -m usage serve` binds `127.0.0.1:<port>` (default 8765). Serves `dashboard/` statically and `GET /api/summary?month=YYYY-MM` returning JSON: month figures, projection, trends, daily series (actual and projected), model split, token-type split, sessions (all fields plus tips), projects, `cost_available`, `threshold`, `generated_at`. A background thread refreshes parser and costs every 60 seconds; requests never trigger parsing.
+`python3.15 -m usage serve` binds `127.0.0.1:<port>` (default 8765). Serves `dashboard/` statically and `GET /api/summary?month=YYYY-MM` returning JSON: month figures, projection, trends, daily series (actual and projected), model split, token-type split, sessions (all fields plus tips), projects, `cost_available`, `threshold`, `generated_at`. A background thread refreshes parser and costs every 60 seconds; requests never trigger parsing.
 
 The page implements the approved mockup: large title with month, segmented tabs Month / Sessions / Projects addressable by URL hash, Auto / Light / Dark control persisted in localStorage, glass panels, trend strip (arrow, verdict sentence, magnitude, footnote), daily bars with faded projection and threshold share, model and token-type splits, title-led session table with working directory, detail panel with tips, projects table. Rows keep DOM identity across refreshes; a numeric cell that changed since the page was last focused gets a held highlight and a "+$x since you looked" note until the user interacts with the row. Charts are inline SVG rendered from data. `prefers-reduced-transparency` and `prefers-reduced-motion` are honoured. Colour is never the sole carrier of state.
 
@@ -157,7 +157,7 @@ Notifications: state file `~/.claude/usage-state/<session_id>.json` holds `annou
 
 ### 4.9 Settings changes (user-level `~/.claude/settings.json`)
 
-- `statusLine`: `{ "type": "command", "command": "python3 <repo>/statusline/statusline.py", "padding": 0 }`
+- `statusLine`: `{ "type": "command", "command": "<python> <repo>/statusline/statusline.py", "padding": 0 }`, where `<python>` is the absolute Python 3.15 path install.sh resolves (16.1)
 - `hooks.PreCompact`: matcher `auto`, command path to `precompact-notify.sh`
 - `autoCompactWindow`: not set (revised 2026-09-10: an earlier installer wrote 200000; the installer now removes that exact value and never writes one)
 - `cleanupPeriodDays`: 90
@@ -207,9 +207,9 @@ Manual acceptance: run against the real transcripts, compare session token total
 
 ## 9. Operations
 
-- Start: `python3 -m usage serve` from this directory, then open `http://127.0.0.1:8765`.
+- Start: `uv run usage serve` (or `python3.15 -m usage serve`) from this directory, then open `http://127.0.0.1:8765`.
 - Optional launchd agent `~/Library/LaunchAgents/com.example.claude-usage.plist` running the same command at login; documented, not installed by default.
-- Prerequisites: Python 3.9+ (system python3 is fine), `brew install terminal-notifier`, Node for `npx ccusage` (or `npm i -g ccusage`). First notification requires granting terminal-notifier permission in System Settings.
+- Prerequisites: uv and Python 3.15+ (install.sh installs 3.15 with uv if it is missing; the macOS system python3 is 3.9 and too old), `brew install terminal-notifier`, Node for `npx ccusage` (or `npm i -g ccusage`). First notification requires granting terminal-notifier permission in System Settings.
 
 ## 10. Deferred
 
@@ -434,7 +434,7 @@ Requested on 2026-11-05: idle sessions and sub-agents must look asleep, only lea
 - **Breaks.** A sleeper never leaves its desk. After a Thinking beat a working lead takes a break with probability 0.3 (canteen, aisle chat with a working colleague, or the cooler). A break is an errand: the moment the session stops working the walker goes home and dozes, or walks out if the session is gone.
 - **Tips.** Each tip has `doc`, a `https://code.claude.com/docs/en/...#section` link, and its text was rewritten to say only what that page says (checked 2026-11-05): compacting at a natural break (prompt-caching), subagents keeping verbose output out of the main context while their own calls still count, the cache lifetime of one hour on a subscription and five minutes on an API key, `/clear` between unrelated tasks, specific prompts needing fewer file reads, `/effort` for simpler tasks, and loaded skills staying in the conversation.
 - **Hardening.** The server answers 403 unless `Host` is `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding). The installer shell-quotes the repo path in the statusline and hook commands and still recognises its own hook when quoted. `ccusage` is pinned to `20.0.48` instead of `@latest`.
-- **CI.** `.github/workflows/tests.yml` runs pytest (which drives the node checks) on macOS with Python 3.9 and 3.13.
+- **CI.** `.github/workflows/tests.yml` runs pytest (which drives the node checks) on macOS with Python 3.9 and 3.13 (revised in 16: 3.15 only).
 
 ## 15. Revision 2026-11-05: the Office in three.js
 
@@ -478,3 +478,17 @@ three r187 is vendored in `dashboard/vendor/three` (the npm tarball's `three.mod
 ### 15.7 Controller, accessibility and tests
 
 `office.js` is an ES module: it fetches every 5 s, feeds the simulation and the view, and owns the hover card, the theme picker, the Agents rail links and a screen-reader roster of buttons (one per worker). The empty-office note replaces the canvas only once the last figure has walked out. Tests: `tests/office_floor_check.js` (every floor size in every theme), `tests/office_themes_check.js` (complete themes, names the scenery draws), static checks for the import map and the vendored hashes, and `tests/test_office_browser.py`, which loads the office in headless Chrome against the real server and fails without a rendered frame or on a console error (skipped without Chrome).
+
+## 16. Revision 2026-11-05: Python 3.15 and Dependabot
+
+Requested on 2026-11-05: run on the latest Python, and let Dependabot cover every dependency, the vendored three.js included.
+
+### 16.1 Python 3.15 and the pinned interpreter
+
+`requires-python` is `>=3.15` and `.python-version` says `3.15`, so `uv run` and CI use 3.15. The code uses the 3.15 idiom: builtin generics, `X | None`, `type` aliases and `datetime.fromisoformat` reading a `Z` suffix itself.
+
+Claude Code runs the statusline command through a shell on every prompt. A bare `python3` there is the macOS system 3.9, which cannot import this code. `uv run` would pick the right version but adds its startup to every prompt. So install.sh resolves one interpreter with `uv python find --system 3.15`, after `uv python install 3.15` when none is found, and writes its absolute, shell-quoted path into `statusLine`. `--system` skips the repo `.venv`, which `uv` may recreate or the reader may delete. uv's path names the minor version (`cpython-3.15-...`), so a patch upgrade of 3.15 keeps it valid. `merge_settings` takes the interpreter as a parameter and stays pure; re-running the installer replaces an older `python3 ...` entry. Without uv the installer fails at once with a message, because every later Python step needs the interpreter. The PreCompact hook is bash and needs no Python.
+
+### 16.2 Dependabot
+
+`.github/dependabot.yml` checks `npm`, `uv` and `github-actions` weekly. A root `package.json` pins `three` exactly to the vendored version; it has no scripts and exists so Dependabot can see the copy in `dashboard/vendor/three`. `tests/test_dashboard_static.py` fails when `package.json`, `package-lock.json` and `dashboard/vendor/three/VERSION` disagree, so a Dependabot bump stays red until someone runs `scripts/vendor_three.py`. That script downloads the tarball from registry.npmjs.org, checks its sha512 against `package-lock.json`, reads only the members `package/build/three.module.js`, `package/build/three.core.js` and `package/LICENSE` by exact name (no other member is ever extracted, and a member that is not a regular file is rejected) and rewrites `VERSION`.

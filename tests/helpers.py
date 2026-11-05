@@ -1,9 +1,9 @@
 """Builders for synthetic Claude Code transcript records used in tests."""
 import json
 import uuid
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Iterable, Optional
 
 BASE_TS = "2026-09-01T09:00:00.000Z"
 _FMT = "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -48,7 +48,7 @@ def compact_summary(ts: str, session_id: str = "s1") -> dict:
 
 def assistant_msg(msg_id: str, ts: str, model: str = "claude-fable-5", input_tokens: int = 2,
                   cache_write: int = 0, cache_read: int = 0, output: int = 10, thinking: int = 0,
-                  content: Optional[list] = None, session_id: str = "s1",
+                  content: list | None = None, session_id: str = "s1",
                   cwd: str = "/Users/x/proj", sidechain: bool = False) -> dict:
     rec = _common(ts, session_id, cwd)
     rec.update({
@@ -93,7 +93,7 @@ def make_project(root: Path, slug: str) -> Path:
 
 
 def make_session(root: Path, slug: str, session_id: str, records: Iterable[dict],
-                 subagents: Optional[Dict[str, Iterable[dict]]] = None) -> Path:
+                 subagents: dict[str, Iterable[dict]] | None = None) -> Path:
     proj = make_project(root, slug)
     main = write_jsonl(proj / ("%s.jsonl" % session_id), records)
     for name, recs in (subagents or {}).items():
@@ -112,7 +112,7 @@ def attachment_msg(attachment: dict, ts: str, session_id: str = "s1",
     return rec
 
 
-def invoked_skills_attachment(bodies: Dict[str, str]) -> dict:
+def invoked_skills_attachment(bodies: dict[str, str]) -> dict:
     return {"type": "invoked_skills",
             "skills": [{"name": n, "path": "plugin:" + n, "content": c} for n, c in bodies.items()]}
 

@@ -3,11 +3,11 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-DEFAULTS: Dict[str, Any] = {
+DEFAULTS: dict[str, Any] = {
     "port": 8765,
     "threshold_tokens": 200000,
     "statusline": {"warn_tokens": 150000, "alert_tokens": 180000},
@@ -30,7 +30,7 @@ class Config:
     threshold_tokens: int
     warn_tokens: int
     alert_tokens: int
-    ccusage_command: List[str]
+    ccusage_command: list[str]
     claude_dir: Path
     notifier: str
     refresh_seconds: int
@@ -41,7 +41,7 @@ class Config:
     office_gone_after_seconds: int
 
 
-def _merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     out = dict(base)
     for k, v in override.items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
@@ -57,7 +57,7 @@ def _positive_int(name: str, value: Any) -> int:
     return value
 
 
-def _resolve_claude_dir(raw: Dict[str, Any], data: Dict[str, Any]) -> Path:
+def _resolve_claude_dir(raw: dict[str, Any], data: dict[str, Any]) -> Path:
     """CLAUDE_CONFIG_DIR, when set and non-empty, wins unconditionally over
     config.json's claude_dir (fix round 2): install.sh and the PreCompact
     hook already honour it unconditionally, so every component must agree
@@ -69,10 +69,10 @@ def _resolve_claude_dir(raw: Dict[str, Any], data: Dict[str, Any]) -> Path:
     return Path(data["claude_dir"]).expanduser()
 
 
-def load_config(path: Optional[Path] = None) -> Config:
+def load_config(path: Path | None = None) -> Config:
     if path is None:
         path = REPO_ROOT / "config.json"
-    raw: Dict[str, Any] = {}
+    raw: dict[str, Any] = {}
     if path.exists():
         raw = json.loads(path.read_text())
     data = _merge(DEFAULTS, raw)

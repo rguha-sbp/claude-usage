@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from .parser import _USAGE_FIELDS, _as_dict, _as_list, _as_str, _safe_parse_ts, _usage_from
 
@@ -26,7 +26,7 @@ SPAWN_TOOLS = ("Agent", "Task")
 HANDBACK = "SubagentHandback"            # how current sub-agents finish
 
 
-def doing_of(content: Any) -> Optional[Dict[str, str]]:
+def doing_of(content: Any) -> dict[str, str] | None:
     """What one assistant record says its author is doing: the last tool_use
     as {tool, target}, "replying" for text, None when it holds neither (a
     thinking-only record says nothing new)."""
@@ -50,12 +50,12 @@ class SubAgent:
     description: str
     background: bool
     depth: int
-    parent: Optional[str]          # agent_id of the spawning agent; None = the main session
+    parent: str | None          # agent_id of the spawning agent; None = the main session
     model: str
     tokens: int
     tools: int
-    tool_mix: Dict[str, int]
-    doing: Optional[Dict[str, str]]
+    tool_mix: dict[str, int]
+    doing: dict[str, str] | None
     started: str
     last: str
     state: str                     # "running" | "asleep" | "done"
@@ -66,22 +66,22 @@ class _Tally:
     """Running totals for one agent transcript."""
     size: int = 0                                  # bytes consumed; stops before a cut last line
     model: str = ""
-    usage: Dict[str, Dict[str, int]] = field(default_factory=dict)   # message id -> per-field max
-    tool_mix: Dict[str, int] = field(default_factory=dict)
-    spawned: List[str] = field(default_factory=list)                 # Agent/Task tool_use ids
-    doing: Optional[Dict[str, str]] = None
+    usage: dict[str, dict[str, int]] = field(default_factory=dict)   # message id -> per-field max
+    tool_mix: dict[str, int] = field(default_factory=dict)
+    spawned: list[str] = field(default_factory=list)                 # Agent/Task tool_use ids
+    doing: dict[str, str] | None = None
     handed_back: bool = False
     replied_last: bool = False
     awaiting: bool = False                         # the last tool call has no result yet
-    started: Optional[str] = None
-    last: Optional[str] = None
+    started: str | None = None
+    last: str | None = None
 
     @property
     def tokens(self) -> int:
         return sum(u["input_tokens"] + u["cache_write"] + u["cache_read"] + u["output"] for u in self.usage.values())
 
 
-def _fold(t: _Tally, rec: Dict[str, Any]) -> None:
+def _fold(t: _Tally, rec: dict[str, Any]) -> None:
     ts = _as_str(rec.get("timestamp"))
     if ts:
         t.started = t.started or ts
@@ -139,7 +139,7 @@ def _advance(t: _Tally, path: Path) -> _Tally:
     return t
 
 
-def _read_meta(path: Path) -> Optional[Dict[str, Any]]:
+def _read_meta(path: Path) -> dict[str, Any] | None:
     try:
         meta = json.loads(path.read_text())
     except (OSError, ValueError):
@@ -147,7 +147,7 @@ def _read_meta(path: Path) -> Optional[Dict[str, Any]]:
     return meta if isinstance(meta, dict) else None
 
 
-def _age(ts: Optional[str], now: datetime) -> timedelta:
+def _age(ts: str | None, now: datetime) -> timedelta:
     when = _safe_parse_ts(ts) if ts else None
     return now - when if when is not None else timedelta.max
 
@@ -162,7 +162,7 @@ def _state(t: _Tally, now: datetime, working: timedelta) -> str:
     return "running" if quiet <= working or (t.awaiting and quiet <= TOOL_PATIENCE) else "asleep"
 
 
-def _agent(agent_id: str, meta: Dict[str, Any], t: _Tally, owner: Dict[str, str], now: datetime,
+def _agent(agent_id: str, meta: dict[str, Any], t: _Tally, owner: dict[str, str], now: datetime,
            working: timedelta) -> SubAgent:
     depth = meta.get("spawnDepth")
     return SubAgent(agent_id=agent_id, type=_as_str(meta.get("agentType")) or "agent",
@@ -180,9 +180,9 @@ class AgentReader:
     def __init__(self, claude_dir: Path, working_seconds: int = 60) -> None:
         self.claude_dir = claude_dir
         self.working = timedelta(seconds=working_seconds)
-        self._tallies: Dict[Path, _Tally] = {}
+        self._tallies: dict[Path, _Tally] = {}
 
-    def session_dir(self, transcript: Path) -> Optional[Path]:
+    def session_dir(self, transcript: Path) -> Path | None:
         """The folder holding a session's per-session files, beside its
         transcript; None when the transcript lies outside `claude_dir`."""
         try:
@@ -193,11 +193,11 @@ class AgentReader:
             return None
         return resolved.with_suffix("")
 
-    def retain(self, session_dirs: Set[Path]) -> None:
+    def retain(self, session_dirs: set[Path]) -> None:
         """Forget the tallies of every session whose folder is not in `session_dirs`."""
         self._tallies = {p: t for p, t in self._tallies.items() if p.parent.parent in session_dirs}
 
-    def session_agents(self, transcript_path: Path, now: datetime) -> Tuple[List[SubAgent], int]:
+    def session_agents(self, transcript_path: Path, now: datetime) -> tuple[list[SubAgent], int]:
         """Running and asleep agents plus the done ones from the last
         DONE_WINDOW (the DONE_CAP most recent), ordered by start; and how
         many done ones were left out."""

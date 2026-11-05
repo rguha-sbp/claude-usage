@@ -132,7 +132,7 @@ def _seed_at(s: Store, ts: str, sid: str, cache_read: int) -> None:
 
 def _local_hour(ts: str) -> int:
     from datetime import datetime
-    return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().hour
+    return datetime.fromisoformat(ts).astimezone().hour
 
 
 def test_compute_period_for_a_day_gives_hourly_series_and_compares_to_the_previous_day():

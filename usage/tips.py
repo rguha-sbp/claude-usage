@@ -15,7 +15,7 @@ thinking-heavy never fires.
 """
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .cost import blended_price
 
@@ -43,7 +43,7 @@ class Tip:
     id: str
     title: str
     detail: str
-    saving_usd: Optional[float]
+    saving_usd: float | None
     doc: str
 
 
@@ -89,8 +89,8 @@ def _k(threshold: int) -> str:
     return "%dK" % (threshold // 1000)
 
 
-def session_tips(sess: Dict[str, Any], threshold: int) -> List[Tip]:
-    tips: List[Tip] = []
+def session_tips(sess: dict[str, Any], threshold: int) -> list[Tip]:
+    tips: list[Tip] = []
 
     # compact-earlier
     n_over = sess.get("calls_over_threshold") or 0
@@ -175,12 +175,12 @@ def session_tips(sess: Dict[str, Any], threshold: int) -> List[Tip]:
     return tips
 
 
-def month_tips(sessions: List[Dict[str, Any]], threshold: int, cost_available: bool,
-               skills: Optional[List[Dict[str, Any]]] = None, period_phrase: str = "this month") -> List[Tip]:
+def month_tips(sessions: list[dict[str, Any]], threshold: int, cost_available: bool,
+               skills: list[dict[str, Any]] | None = None, period_phrase: str = "this month") -> list[Tip]:
     """Tips across every session of the period. `skills`: the period's rows
     from skills.aggregate_loads, heaviest first. `period_phrase` is how the
     text refers to the period: 'this month', 'today' or 'on this day'."""
-    tips: List[Tip] = []
+    tips: list[Tip] = []
     per_session = [(s, session_tips(s, threshold)) for s in sessions]
 
     # a single skill / injection carrying a large share of the month's context

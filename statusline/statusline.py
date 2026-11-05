@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.15
 """Claude Code statusline: one coloured line plus threshold notifications (spec §4.7).
 
 Invoked by Claude Code with the statusline JSON on stdin after every assistant
@@ -11,9 +11,9 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -21,7 +21,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from usage.config import load_config  # noqa: E402
 
-Notifier = Callable[[str, str, str], None]
+type Notifier = Callable[[str, str, str], None]
 ANSI = {"green": "\033[32m", "yellow": "\033[33m", "red": "\033[31m", "reset": "\033[0m"}
 
 # Fallback defaults used when config loading itself fails (spec §8 defaults).
@@ -38,7 +38,7 @@ _UNSAFE_SESSION_ID_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 MAX_SESSION_ID_LEN = 64
 
 
-def _safe_state_path(state_dir: Path, session_id: str) -> Optional[Path]:
+def _safe_state_path(state_dir: Path, session_id: str) -> Path | None:
     """Sanitise session_id to a filename confined to state_dir (spec §4.7 hardening).
 
     Any character outside [A-Za-z0-9._-] (notably '/') is replaced with '_', which by
@@ -73,7 +73,7 @@ def _to_number(value):
     return None
 
 
-def context_tokens(data: dict) -> Optional[int]:
+def context_tokens(data: dict) -> int | None:
     """Current context tokens: current_usage sum, else used_percentage * window size, else None.
 
     Each numeric field is coerced tolerantly (int/float/numeric-string accepted); if any
@@ -95,7 +95,7 @@ def context_tokens(data: dict) -> Optional[int]:
     return None
 
 
-def colour_for(ctx: Optional[int], warn: int, alert: int) -> str:
+def colour_for(ctx: int | None, warn: int, alert: int) -> str:
     if ctx is None or ctx < warn:
         return "green"
     return "red" if ctx >= alert else "yellow"
@@ -162,7 +162,7 @@ def write_state(state_dir: Path, session_id: str, state: dict) -> None:
 
 
 # ---------------------------------------------------------------- presence (spec Sec 12.1)
-ProcessTable = Dict[int, Tuple[int, str]]   # pid -> (ppid, command name)
+type ProcessTable = dict[int, tuple[int, str]]   # pid -> (ppid, command name)
 MAX_ANCESTORS = 8
 
 
@@ -183,7 +183,7 @@ def _process_table() -> ProcessTable:
     return table
 
 
-def find_claude_pid(start: int, table: Optional[ProcessTable] = None) -> Optional[int]:
+def find_claude_pid(start: int, table: ProcessTable | None = None) -> int | None:
     """The nearest ancestor of `start` (inclusive) whose command is `claude`:
     the interactive session that spawned this statusline. None when not found."""
     if table is None:
@@ -199,8 +199,8 @@ def find_claude_pid(start: int, table: Optional[ProcessTable] = None) -> Optiona
     return None
 
 
-def stamp_presence(data: dict, state_dir: Path, pid_finder: Callable[[], Optional[int]] = None,
-                   now: Optional[str] = None) -> None:
+def stamp_presence(data: dict, state_dir: Path, pid_finder: Callable[[], int | None] | None = None,
+                   now: str | None = None) -> None:
     """Record that this session's statusline just ran: `seen`, plus the
     session's cwd, model, transcript path and Claude process id when the
     input carries them. The Office tab (spec Sec 12) reads these; a field
@@ -221,7 +221,7 @@ def stamp_presence(data: dict, state_dir: Path, pid_finder: Callable[[], Optiona
     write_state(state_dir, sid, state)
 
 
-def check_thresholds(data: dict, warn: int, alert: int, state_dir: Path, notify: Notifier) -> Optional[str]:
+def check_thresholds(data: dict, warn: int, alert: int, state_dir: Path, notify: Notifier) -> str | None:
     """Fire a warn/alert notification at most once per threshold crossing; reset once ctx drops
     back below warn (a compaction happened). Returns the threshold name fired this run, else None.
     """
@@ -277,7 +277,7 @@ def prune_state(state_dir: Path, max_age_days: int = 7) -> None:
         pass
 
 
-def main(stdin=None, stdout=None, config_path: Optional[Path] = None, notify: Optional[Notifier] = None) -> int:
+def main(stdin=None, stdout=None, config_path: Path | None = None, notify: Notifier | None = None) -> int:
     stdin = stdin or sys.stdin
     stdout = stdout or sys.stdout
 

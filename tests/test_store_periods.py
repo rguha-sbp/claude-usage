@@ -16,7 +16,7 @@ def mem() -> Store:
 
 
 def _hour(ts: str) -> int:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().hour
+    return datetime.fromisoformat(ts).astimezone().hour
 
 
 def test_local_hour_is_the_machine_local_hour_or_none():
