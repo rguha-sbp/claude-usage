@@ -33,6 +33,14 @@ window.OfficeSim = (function () {
   var hash = window.OfficeCast.hash, rng = window.OfficeCast.rng;   // office-cast.js loads first
   function between(r, a, b) { return a + r() * (b - a); }
   function copy(p) { return { x: p.x, y: p.y }; }
+  /* Structural equality of plain place data: numbers, spots, lists. */
+  function same(p, q) {
+    if (p === q) return true;
+    if (!p || !q || typeof p !== 'object' || typeof q !== 'object') return false;
+    var keys = Object.keys(p);
+    return keys.length === Object.keys(q).length && keys.every(function (k) { return same(p[k], q[k]); });
+  }
+  function spotKey(p) { return p.x.toFixed(2) + ',' + p.y.toFixed(2); }
   function tierOf(model) {
     return (window.OfficeCast && window.OfficeCast.tierOf(model)) || { key: 'core', speed: 1 };
   }
@@ -187,15 +195,19 @@ window.OfficeSim = (function () {
      between the canteen, a chat in the aisle and the water cooler. */
   function takeBreak(a, sim) {
     if (a.rng() < (sim.anyLounger(a) ? 0.85 : 0.5)) {
-      var table = sim.freeSpot(a, a.places.canteen, 'canteen');
+      var table = sim.freeSpot(a, a.places.canteen);
       if (table) return errand(a, table, function () { return new Lounging(); });
     }
     var partner = sim.partnerFor(a);
-    if (partner && a.rng() < 0.6) {
-      sim.transition(partner, errand(partner, partner.places.meet2, function () { return new Chatting(a); }));
-      return errand(a, a.places.meet, function () { return new Chatting(partner); });
+    if (partner && a.rng() < 0.6 && sim.freeSpot(a, [a.places.meet])) {
+      if (sim.freeSpot(partner, [partner.places.meet2])) {
+        sim.transition(partner, errand(partner, partner.places.meet2, function () { return new Chatting(a); }));
+        return errand(a, a.places.meet, function () { return new Chatting(partner); });
+      }
+      sim.release(a);
     }
-    return errand(a, a.places.stand || a.places.cooler, function () { return new Drinking(); });
+    var stand = sim.freeSpot(a, [a.places.stand]);
+    return stand ? errand(a, stand, function () { return new Drinking(); }) : new Typing();
   }
 
   /* Walk the `points`, then become whatever `then()` returns. A gone
@@ -307,7 +319,9 @@ window.OfficeSim = (function () {
     var gone = leaveIfGone(a);
     if (gone) return gone;
     if (a.server === 'done') {
-      return sim.wander ? walkTo(a, a.places.handoff, function () { return new HandingBack(); }) : new Gone();
+      if (!sim.wander) return new Gone();
+      var desk = sim.freeSpot(a, [a.places.handoff]);     // one intern hands back at a time
+      return desk ? walkTo(a, desk, function () { return new HandingBack(); }) : null;
     }
     var want = a.server === 'asleep' ? 'dozing' : 'standing';
     if (want === here) return null;
@@ -358,7 +372,7 @@ window.OfficeSim = (function () {
      floor no walk on the new one is known to be clear. The new seat is,
      and every walk the agent then plans starts from there. */
   function relocate(sim, a, places) {
-    var moved = a.places !== places && JSON.stringify(a.places) !== JSON.stringify(places);
+    var moved = !same(a.places, places);
     a.places = places;
     if (!moved) return;
     sim.release(a);
@@ -375,7 +389,8 @@ window.OfficeSim = (function () {
   function Sim(opts) {
     this.agents = {};
     this.primed = false;                   // true once the first sync has finished
-    this.spots = {};                       // "canteen3" -> session id holding it
+    this.floor = null;                     // the places of the last sync: a new object means a new floor
+    this.spots = {};                       // spotKey -> id of the agent holding that spot
     this.wander = !(opts && opts.wander === false);
   }
 
@@ -389,10 +404,14 @@ window.OfficeSim = (function () {
   /* Server payload in, agents updated: new sessions get an agent at their
      seat, missing ones are told they are gone, an agent whose places moved
      (rooms re-laid out) restarts at its new seat (relocate), and each
-     sub-agent gets an intern (syncInterns). */
+     sub-agent gets an intern (syncInterns). `placesById` is the floor
+     plan's own `places`: the same object means the same floor, so places
+     are compared only after a re-layout. */
   Sim.prototype.sync = function (workers, placesById) {
     var seen = {};
     var self = this;
+    var relaid = placesById !== this.floor;   // office.js rebuilds the plan only when the floor changes
+    this.floor = placesById;
     workers.forEach(function (w) {
       var places = placesById[w.session_id];
       if (!places) return;
@@ -413,9 +432,9 @@ window.OfficeSim = (function () {
         a.server = server;
         a.tier = tier.key;
         a.speed = tier.speed;
-        relocate(self, a, places);
+        if (relaid) relocate(self, a, places);
       }
-      self.syncInterns(w, places, seen);
+      self.syncInterns(w, places, seen, relaid);
     });
     Object.keys(this.agents).forEach(function (id) {
       if (!seen[id]) self.agents[id].server = 'gone';
@@ -426,7 +445,7 @@ window.OfficeSim = (function () {
   /* One intern per listed sub-agent that is not done, while the pod has a
      free slot; one already on stage follows its agent's state. A sub-agent
      that finished before we ever saw it only shows in the rail. */
-  Sim.prototype.syncInterns = function (w, places, seen) {
+  Sim.prototype.syncInterns = function (w, places, seen, relaid) {
     var self = this;
     (w.agents || []).forEach(function (sub) {
       var id = w.session_id + '/' + sub.agent_id;
@@ -439,7 +458,7 @@ window.OfficeSim = (function () {
       }
       seen[id] = true;
       a.server = sub.state;
-      relocate(self, a, internPlaces(places, a.slot));
+      if (relaid) relocate(self, a, internPlaces(places, a.slot));
       a.background = !!sub.background;
       a.parentId = sub.parent ? w.session_id + '/' + sub.parent : w.session_id;
     });
@@ -501,18 +520,25 @@ window.OfficeSim = (function () {
 
   /* Is anyone already at the canteen, or on their way there? */
   Sim.prototype.anyLounger = function (a) {
-    return this.leadWhere(a, function (b) { return b.state.pose === 'lounging' || (b.held && b.state.pose === 'walking'); });
+    return this.leadWhere(a, function (b) {
+      return b.state.pose === 'lounging' || (b.state.pose === 'walking' && b.places.canteen.indexOf(b.state.target) !== -1);
+    });
   };
 
-  /* Standing room is first come, first served, so two workers never share
-     a spot. The holder gives it back when it walks away (goHome/Leaving). */
-  Sim.prototype.freeSpot = function (a, list, key) {
-    if (!list || !list.length) return null;
+  /* Every shared spot (a canteen table, the cooler stand, the two meeting
+     spots, a desk's hand-off spot) is first come, first served, so two
+     agents never stand inside each other. The first spot of `list` that
+     nobody else holds becomes `a`'s, or null. An agent holds one spot at a
+     time and gives it back when it walks away (goHome, Leaving, relocate).
+     Spots are told apart by where they are: each worker's places are its
+     own objects, but the cooler stand of a room is one point for all. */
+  Sim.prototype.freeSpot = function (a, list) {
     for (var i = 0; i < list.length; i++) {
-      var holder = this.spots[key + i];
+      var key = spotKey(list[i]), holder = this.spots[key];
       if (!holder || holder === a.id) {
-        this.spots[key + i] = a.id;
-        a.held = key + i;
+        if (a.held !== key) this.release(a);
+        this.spots[key] = a.id;
+        a.held = key;
         return list[i];
       }
     }

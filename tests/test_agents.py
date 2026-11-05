@@ -5,10 +5,12 @@ from dataclasses import fields
 from datetime import datetime, timedelta, timezone
 
 from tests.helpers import assistant_msg, iso, tool_result_msg, user_msg, write_jsonl
+from usage import agents as agents_module
 from usage.agents import AgentReader, SubAgent, doing_of
 from usage.parser import parse_records
 
 NOW = datetime(2026, 9, 1, 9, 5, 0, tzinfo=timezone.utc)      # iso(5)
+INTERRUPTED = "[Request interrupted by user]"                 # how Claude Code closes a turn it stopped
 
 
 def _session(tmp_path, sid="s1"):
@@ -105,8 +107,8 @@ def test_a_pending_tool_call_is_work_for_up_to_fifteen_minutes(tmp_path):
 def test_asleep_once_quiet_past_the_working_window(tmp_path):
     transcript, folder = _session(tmp_path)
     _agent(folder, "a1", [assistant_msg("m1", iso(1), content=[tool("Grep", pattern="p")]),
-                          tool_result_msg("hit", iso(2))])
-    assert _by_id(_read(tmp_path, transcript)[0])["a1"].state == "asleep"                # 3 min quiet, no tool pending
+                          tool_result_msg("hit", iso(2)), user_msg(INTERRUPTED, iso(2))])
+    assert _by_id(_read(tmp_path, transcript)[0])["a1"].state == "asleep"                # 3 min quiet, turn closed
     soon = datetime(2026, 9, 1, 9, 2, 30, tzinfo=timezone.utc)
     assert _by_id(_read(tmp_path, transcript, soon)[0])["a1"].state == "running"         # 30 s quiet
     patient = AgentReader(tmp_path, working_seconds=600)
@@ -120,17 +122,57 @@ def _append(path, *records):
 
 
 def test_parallel_tool_calls_close_one_by_one(tmp_path):
-    """Read, Grep and a long Bash in one turn: the first results must not
-    clear the Bash that still runs."""
-    transcript, folder = _session(tmp_path)
-    jsonl = _agent(folder, "a1", [
-        assistant_msg("m1", iso(1), content=[tool("Read", tid="t1", file_path="/a"), tool("Grep", tid="t2", pattern="p"),
-                                             tool("Bash", tid="t3", command="make test")]),
-        tool_result_msg("a", iso(1), tool_use_id="t1"), tool_result_msg("hit", iso(2), tool_use_id="t2")])
+    """Three agents spawned in one turn: the first two results must not
+    clear the call that still waits on the third."""
+    calls = [tool("Agent", tid="toolu_a%d" % k, description="d") for k in (1, 2, 3)]
+    transcript = write_jsonl(tmp_path / "projects" / "-x" / "s1.jsonl", [
+        user_msg("go", iso(0)), assistant_msg("lead", iso(0), content=calls, stop_reason="tool_use"),
+        tool_result_msg("a", iso(2), tool_use_id="toolu_a1"), tool_result_msg("b", iso(2), tool_use_id="toolu_a2")])
+    folder = transcript.with_suffix("") / "subagents"
+    for k in (1, 2, 3):
+        _agent(folder, "a%d" % k, [assistant_msg("m%d" % k, iso(1), stop_reason="end_turn",
+                                                 content=[{"type": "text", "text": "Found it."}])])
     reader = AgentReader(tmp_path)
-    assert _by_id(reader.session_agents(transcript, NOW)[0])["a1"].state == "running"   # 3 min quiet, Bash open
-    _append(jsonl, tool_result_msg("ok", iso(2), tool_use_id="t3"))
-    assert _by_id(reader.session_agents(transcript, NOW)[0])["a1"].state == "asleep"    # every call answered
+    states = {a.agent_id: a.state for a in reader.session_agents(transcript, NOW)[0]}
+    assert states == {"a1": "done", "a2": "done", "a3": "running"}                       # the lead still waits on a3
+    _append(transcript, tool_result_msg("c", iso(3), tool_use_id="toolu_a3"))
+    assert _by_id(reader.session_agents(transcript, NOW)[0])["a3"].state == "done"
+
+
+def test_an_open_turn_is_work_for_up_to_fifteen_minutes(tmp_path):
+    """No record while the model composes its next block: after a tool
+    result, or after a block of a message that has more to come (no
+    `stop_reason` yet), the agent is still at work."""
+    transcript, folder = _session(tmp_path)
+    answered = _agent(folder, "a1", [assistant_msg("m1", iso(1), content=[tool("Grep", pattern="p")], stop_reason="tool_use"),
+                                     tool_result_msg("hit", iso(1))])
+    _agent(folder, "a2", [assistant_msg("m2", iso(1), content=[{"type": "thinking", "thinking": "."}])])
+    _agent(folder, "a3", [assistant_msg("m3", iso(1), content=[tool("Grep", pattern="p")], stop_reason="tool_use"),
+                          tool_result_msg("hit", iso(1)), user_msg(INTERRUPTED, iso(1))])
+    reader = AgentReader(tmp_path)
+    states = {a.agent_id: a.state for a in reader.session_agents(transcript, NOW)[0]}
+    assert states == {"a1": "running", "a2": "running", "a3": "asleep"}                  # 4 min quiet
+    later = NOW + timedelta(minutes=12)                                                  # 16 min after iso(1)
+    assert {a.state for a in reader.session_agents(transcript, later)[0]} == {"asleep"}
+    _append(answered, user_msg(INTERRUPTED, iso(2)))
+    assert _by_id(reader.session_agents(transcript, NOW)[0])["a1"].state == "asleep"     # the turn was closed
+
+
+def test_long_transcripts_are_read_in_bounded_steps(tmp_path, monkeypatch):
+    """A step smaller than one record still folds every record once, the
+    lead's open calls included."""
+    monkeypatch.setattr(agents_module, "READ_BYTES", 7)
+    transcript = write_jsonl(tmp_path / "projects" / "-x" / "s1.jsonl", [
+        user_msg("go", iso(0)), assistant_msg("lead", iso(0), content=[tool("Agent", tid="toolu_a1", description="d")])])
+    folder = transcript.with_suffix("") / "subagents"
+    _agent(folder, "a1", [assistant_msg("m1", iso(1), content=[tool("Grep", pattern="p")], stop_reason="tool_use"),
+                          tool_result_msg("hit", iso(2)), user_msg(INTERRUPTED, iso(2)),
+                          assistant_msg("m2", iso(3), content=[tool("Read", tid="t2", file_path="/a")])])
+    reader = AgentReader(tmp_path)
+    a = _by_id(reader.session_agents(transcript, NOW)[0])["a1"]
+    assert a.tool_mix == {"Grep": 1, "Read": 1} and a.started == iso(1) and a.last == iso(3)
+    session = reader._sessions[transcript.resolve().with_suffix("")]
+    assert session.lead.open == {"toolu_a1"} and session.lead.size == transcript.stat().st_size
 
 
 def test_a_foreground_agent_works_while_its_parent_waits_on_it(tmp_path):
@@ -140,7 +182,7 @@ def test_a_foreground_agent_works_while_its_parent_waits_on_it(tmp_path):
         user_msg("go", iso(0)), assistant_msg("lead", iso(0), content=[tool("Agent", tid="toolu_a1", description="d")])])
     folder = transcript.with_suffix("") / "subagents"
     _agent(folder, "a1", [user_msg("look", iso(0)), assistant_msg("m1", iso(1), content=[tool("Grep", pattern="p")]),
-                          tool_result_msg("hit", iso(2))])
+                          tool_result_msg("hit", iso(2)), user_msg(INTERRUPTED, iso(2))])
     _agent(folder, "a2", [assistant_msg("m2", iso(2), content=[{"type": "text", "text": "Thinking aloud."}])],
            toolUseId="toolu_a2")
     _append(transcript, assistant_msg("lead2", iso(0), content=[tool("Agent", tid="toolu_a2", description="e")]))

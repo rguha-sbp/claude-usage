@@ -5,8 +5,9 @@ A session's sub-agents sit beside its transcript: `<transcript without
 naming its type, task, depth and the parent's Agent tool_use id.
 `AgentReader` reads each agent transcript, and the lead's own, incrementally
 (only the bytes appended since the last call, the parser's append-only
-assumption) and keeps running totals, so the Office's 5-second poll stays
-cheap however long an agent runs. No database and no knowledge of the
+assumption, in bounded steps) and keeps running totals, so the Office's
+5-second poll stays cheap however long an agent runs. Of the lead's
+transcript it keeps only the open tool calls. No database and no knowledge of the
 office here.
 """
 import json
@@ -25,6 +26,7 @@ TARGET_CHARS = 80
 TARGET_KEYS = ("file_path", "command", "pattern", "url", "query", "description")
 SPAWN_TOOLS = ("Agent", "Task")
 HANDBACK = "SubagentHandback"            # how current sub-agents finish
+READ_BYTES = 1 << 20                     # how much of a transcript one read step holds
 
 
 def doing_of(content: Any) -> dict[str, str] | None:
@@ -62,10 +64,31 @@ class SubAgent:
     state: str                     # "running" | "asleep" | "done"
 
 
+def _blocks(rec: dict[str, Any], kind: str) -> list[dict[str, Any]]:
+    """The content blocks of type `kind` in one record's message."""
+    content = _as_list(_as_dict(rec.get("message")).get("content"))
+    return [b for b in content if isinstance(b, dict) and b.get("type") == kind]
+
+
 @dataclass
-class _Tally:
-    """Running totals for one agent transcript."""
+class _Calls:
+    """The tool calls of one transcript still waiting on their tool_result.
+    That is all a lead's transcript is read for: whether it still waits on
+    the Agent call that spawned one of its agents."""
     size: int = 0                                  # bytes consumed; stops before a cut last line
+    open: set[str] = field(default_factory=set)
+
+    def fold(self, rec: dict[str, Any]) -> None:
+        # parallel tool calls answer one by one: only the matching call closes
+        if rec.get("type") == "user":
+            self.open.difference_update(_as_str(b.get("tool_use_id")) or "" for b in _blocks(rec, "tool_result"))
+        elif rec.get("type") == "assistant":
+            self.open.update(tid for b in _blocks(rec, "tool_use") if (tid := _as_str(b.get("id"))))
+
+
+@dataclass
+class _Tally(_Calls):
+    """Running totals for one agent transcript."""
     model: str = ""
     usage: dict[str, dict[str, int]] = field(default_factory=dict)   # message id -> per-field max
     tool_mix: dict[str, int] = field(default_factory=dict)
@@ -73,7 +96,7 @@ class _Tally:
     doing: dict[str, str] | None = None
     handed_back: bool = False
     replied_last: bool = False
-    open: set[str] = field(default_factory=set)    # tool_use ids still waiting on their tool_result
+    mid_turn: bool = False      # the model owes more: a tool result came back, or a message is still streaming
     started: str | None = None
     last: str | None = None
 
@@ -81,77 +104,70 @@ class _Tally:
     def tokens(self) -> int:
         return sum(u["input_tokens"] + u["cache_write"] + u["cache_read"] + u["output"] for u in self.usage.values())
 
-
-def _fold(t: _Tally, rec: dict[str, Any]) -> None:
-    ts = _as_str(rec.get("timestamp"))
-    if ts:
-        t.started = t.started or ts
-        t.last = ts
-    message = _as_dict(rec.get("message"))
-    if rec.get("type") == "user":
-        # parallel tool calls answer one by one: only the matching call closes
-        for b in _as_list(message.get("content")):
-            if isinstance(b, dict) and b.get("type") == "tool_result":
-                t.open.discard(_as_str(b.get("tool_use_id")) or "")
-        return
-    if rec.get("type") != "assistant" or not message:
-        return
-    t.model = _as_str(message.get("model")) or t.model
-    mid = _as_str(message.get("id")) or _as_str(rec.get("uuid"))
-    usage = _usage_from(message)
-    if mid and usage is not None:
-        seen = t.usage.setdefault(mid, dict.fromkeys(_USAGE_FIELDS, 0))
-        for name in _USAGE_FIELDS:
-            seen[name] = max(seen[name], usage[name])
-    content = message.get("content")
-    for b in _as_list(content):
-        if not (isinstance(b, dict) and b.get("type") == "tool_use"):
-            continue
-        name, tid = _as_str(b.get("name")) or "?", _as_str(b.get("id"))
-        if tid:
-            t.open.add(tid)
-        if name == HANDBACK:
-            t.handed_back = True
-            continue
-        t.tool_mix[name] = t.tool_mix.get(name, 0) + 1
-        if name in SPAWN_TOOLS and tid:
-            t.spawned.append(tid)
-    doing = doing_of(content)
-    if doing is not None:
-        t.doing = doing
-        t.replied_last = doing["tool"] == "replying"
+    def fold(self, rec: dict[str, Any]) -> None:
+        super().fold(rec)
+        ts = _as_str(rec.get("timestamp"))
+        if ts:
+            self.started = self.started or ts
+            self.last = ts
+        message = _as_dict(rec.get("message"))
+        if rec.get("type") == "user":
+            self.mid_turn = bool(_blocks(rec, "tool_result"))
+            return
+        if rec.get("type") != "assistant" or not message:
+            return
+        # Claude Code writes one record per content block and sets
+        # `stop_reason` on the last block of each message only
+        self.mid_turn = message.get("stop_reason") is None
+        self.model = _as_str(message.get("model")) or self.model
+        mid = _as_str(message.get("id")) or _as_str(rec.get("uuid"))
+        usage = _usage_from(message)
+        if mid and usage is not None:
+            seen = self.usage.setdefault(mid, dict.fromkeys(_USAGE_FIELDS, 0))
+            for name in _USAGE_FIELDS:
+                seen[name] = max(seen[name], usage[name])
+        for b in _blocks(rec, "tool_use"):
+            name, tid = _as_str(b.get("name")) or "?", _as_str(b.get("id"))
+            if name == HANDBACK:
+                self.handed_back = True
+                continue
+            self.tool_mix[name] = self.tool_mix.get(name, 0) + 1
+            if name in SPAWN_TOOLS and tid:
+                self.spawned.append(tid)
+        doing = doing_of(message.get("content"))
+        if doing is not None:
+            self.doing = doing
+            self.replied_last = doing["tool"] == "replying"
 
 
-def _advance(t: _Tally, path: Path) -> _Tally:
-    """Fold in whatever was appended since `t.size`; a file that shrank was
-    rewritten and is read again from the start."""
-    size = path.stat().st_size
-    if size < t.size:
-        t = _Tally()
-    if size == t.size:
-        return t
-    with open(path, "rb") as fh:
-        fh.seek(t.size)
-        chunk = fh.read(size - t.size)
-    end = chunk.rfind(b"\n") + 1               # a cut last line waits for the next read
-    for line in chunk[:end].splitlines():
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(rec, dict):
-            _fold(t, rec)
-    t.size += end
-    return t
-
-
-def _read(tallies: dict[Path, _Tally], path: Path) -> _Tally | None:
-    """`path`'s tally in `tallies`, brought up to date; None when unreadable."""
+def _advance[T: _Calls](t: T, path: Path) -> T | None:
+    """`t` with whatever was appended since `t.size` folded in, READ_BYTES
+    at a time so a long transcript's first read stays small; a file that
+    shrank was rewritten and is read again from the start. None when the
+    file is unreadable."""
     try:
-        tallies[path] = _advance(tallies.get(path, _Tally()), path)
+        size = path.stat().st_size
+        if size < t.size:
+            t = type(t)()
+        if size == t.size:
+            return t
+        with open(path, "rb") as fh:
+            fh.seek(t.size)
+            cut = b""
+            while block := fh.read(READ_BYTES):
+                lines = (cut + block).split(b"\n")
+                cut = lines.pop()                  # a cut last line waits for the next block or read
+                for line in lines:
+                    t.size += len(line) + 1
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(rec, dict):
+                        t.fold(rec)
     except OSError:
         return None
-    return tallies[path]
+    return t
 
 
 def _read_meta(path: Path) -> dict[str, Any] | None:
@@ -171,14 +187,15 @@ def _state(t: _Tally, now: datetime, working: timedelta, awaited: bool) -> str:
     """Done once handed back, or for a legacy agent once its text reply has
     stood QUIET_REPLY and its parent has the result. Running while it wrote
     something within `working` (the leads' own window), or, up to
-    TOOL_PATIENCE, while one of its tool calls waits on a result or its
-    parent's call (`awaited`) still waits on it: the model writes nothing
-    while it composes a long reply, so a quiet file alone is not idleness.
-    Asleep otherwise, like a quiet lead (spec Sec 13.2)."""
+    TOOL_PATIENCE, while it is busy: one of its tool calls waits on a
+    result, its parent's call (`awaited`) still waits on it, or its turn is
+    still open (`mid_turn`). The model writes nothing while it composes a
+    block, so a quiet file alone is not idleness. Asleep otherwise, like a
+    quiet lead (spec Sec 13.2)."""
     quiet = _age(t.last, now)
     if t.handed_back or (t.replied_last and not awaited and quiet >= QUIET_REPLY):
         return "done"
-    busy = awaited or bool(t.open)
+    busy = awaited or bool(t.open) or t.mid_turn
     return "running" if quiet <= working or (busy and quiet <= TOOL_PATIENCE) else "asleep"
 
 
@@ -195,14 +212,21 @@ def _agent(agent_id: str, meta: dict[str, Any], t: _Tally, owner: dict[str, str]
                     doing=t.doing, started=t.started or "", last=t.last or "", state=_state(t, now, working, tool_use_id in awaited))
 
 
+@dataclass
+class _Session:
+    """What the reader remembers of one session between polls."""
+    lead: _Calls = field(default_factory=_Calls)
+    agents: dict[Path, _Tally] = field(default_factory=dict)   # agent transcript -> its tally
+
+
 class AgentReader:
-    """One per Office; remembers, per session folder, a `_Tally` for the
-    lead's transcript and each agent transcript between calls."""
+    """One per Office; remembers, per session folder, the lead's open calls
+    and a `_Tally` per agent transcript between calls."""
 
     def __init__(self, claude_dir: Path, working_seconds: int = 60) -> None:
         self.claude_dir = claude_dir
         self.working = timedelta(seconds=working_seconds)
-        self._tallies: dict[Path, dict[Path, _Tally]] = {}
+        self._sessions: dict[Path, _Session] = {}
 
     def session_dir(self, transcript: Path) -> Path | None:
         """The folder holding a session's per-session files, beside its
@@ -216,8 +240,8 @@ class AgentReader:
         return resolved.with_suffix("")
 
     def retain(self, session_dirs: set[Path]) -> None:
-        """Forget the tallies of every session whose folder is not in `session_dirs`."""
-        self._tallies = {d: t for d, t in self._tallies.items() if d in session_dirs}
+        """Forget every session whose folder is not in `session_dirs`."""
+        self._sessions = {d: s for d, s in self._sessions.items() if d in session_dirs}
 
     def session_agents(self, transcript_path: Path, now: datetime) -> tuple[list[SubAgent], int]:
         """Running and asleep agents plus the done ones from the last
@@ -227,7 +251,7 @@ class AgentReader:
         folder = session_dir / "subagents" if session_dir is not None else None
         if folder is None or not folder.is_dir():
             return [], 0
-        tallies = self._tallies.setdefault(session_dir, {})
+        session = self._sessions.setdefault(session_dir, _Session())
         found = []
         for meta_path in sorted(folder.glob("agent-*.meta.json")):
             agent_id = meta_path.name[len("agent-"):-len(".meta.json")]
@@ -235,13 +259,16 @@ class AgentReader:
             meta = _read_meta(meta_path)
             if meta is None or not jsonl.is_file():
                 continue
-            tally = _read(tallies, jsonl)
-            if tally is not None and tally.started is not None:
+            tally = _advance(session.agents.get(jsonl, _Tally()), jsonl)
+            if tally is None:
+                continue
+            session.agents[jsonl] = tally
+            if tally.started is not None:
                 found.append((agent_id, meta, tally))
         # a parent (the lead or an agent) with the spawning call still open
         # is blocked on that agent: a foreground agent that has not finished
-        lead = _read(tallies, transcript_path.resolve()) or _Tally()
-        awaited = lead.open.union(*(t.open for _, _, t in found))
+        session.lead = _advance(session.lead, transcript_path.resolve()) or session.lead
+        awaited = session.lead.open.union(*(t.open for _, _, t in found))
         owner = {tid: aid for aid, _, t in found for tid in t.spawned}
         agents = sorted((_agent(aid, meta, t, owner, awaited, now, self.working) for aid, meta, t in found),
                         key=lambda a: a.started)

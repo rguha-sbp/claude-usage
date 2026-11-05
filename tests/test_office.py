@@ -181,10 +181,10 @@ def test_payload_forgets_the_agents_of_sessions_that_left(tmp_path):
     _state(tmp_path, "b", seen_ago=1, transcript_path=str(b))
     office = _office(tmp_path)
     office.payload(now=NOW)
-    assert len(office.reader._tallies) == 2
+    assert len(office.reader._sessions) == 2
     (tmp_path / "b.json").unlink()
     office.payload(now=NOW)
-    assert list(office.reader._tallies) == [a.resolve().with_suffix("")]
+    assert list(office.reader._sessions) == [a.resolve().with_suffix("")]
 
 
 def test_unusable_state_files_are_skipped(tmp_path):

@@ -115,8 +115,12 @@ const NEUTRAL = {
 };
 const KEYS = Object.keys(NEUTRAL);
 
-/* Sitting on whatever `s.seat` is: hips on the cushion, thighs level. */
+/* Sitting on whatever `s.seat` is: hips on the cushion, thighs level.
+   A figure in a seated pose with no chair under it (situate() finds a
+   seat only within reach) keeps the upper body and stands on its legs, so
+   every seated pose is defined everywhere and the frame loop never throws. */
 function seated(s, o) {
+  if (!s.seat) return Object.assign({}, o, { hipY: STAND, hipZ: 0, lLeg: 0, lKnee: 0, rLeg: 0, rKnee: 0 });
   return Object.assign({ hipY: s.seat.height + 0.06, hipZ: s.seat.back, lLeg: -1.5, lKnee: 1.45, rLeg: -1.5, rKnee: 1.45 }, o);
 }
 function walkLegs(s, o) {

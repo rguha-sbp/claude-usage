@@ -144,6 +144,18 @@ function solidsOf(plan) {
     .map(function (bx) { return grow(bx, -0.05); });
 }
 var AWAY = { walking: 1, drinking: 1, chatting: 1, lounging: 1 };
+/* Poses held on one spot: no two agents may hold them on the same point. */
+var PARKED = { drinking: 1, chatting: 1, lounging: 1, handing: 1, standing: 1 };
+function crowdOf(list) {
+  var parked = list.filter(function (ag) { return PARKED[ag.state.pose]; });
+  for (var i = 0; i < parked.length; i++) {
+    for (var j = i + 1; j < parked.length; j++) {
+      var a = parked[i], b = parked[j];
+      if (Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) < 0.1) return a.id + ' and ' + b.id + ' ' + a.state.pose + ' on one spot';
+    }
+  }
+  return null;
+}
 function workersOf(data) {
   var out = [];
   data.rooms.forEach(function (room) { room.workers.forEach(function (w) { out.push(w); }); });
@@ -166,7 +178,7 @@ function drive(projects) {
   };
   sim.sync(withIntern('running'), plan.places);
   var seen = { canteen: false, sofa: false, cooler: false, pod: false, door: 0, home: 0, relaid: null };
-  var blocked = null, relaid = null, dt = 1 / 30;
+  var blocked = null, relaid = null, crowded = null, dt = 1 / 30;
   var sofas = plan.seats.filter(function (s) { return !s.desk; });
   var busiest = data.rooms.reduce(function (best, room, i) { return room.workers.length > data.rooms[best].workers.length ? i : best; }, 0);
   for (var t = 0; t < 420 * 30; t++) {
@@ -199,6 +211,7 @@ function drive(projects) {
     if (t === 300 * 30) sim.sync(withIntern('running').map(function (w) { return Object.assign({}, w, { state: 'asleep' }); }), plan.places);
     if (t === 360 * 30) sim.sync([], plan.places);                  // every session ends: everyone walks out
     sim.tick(dt);
+    crowded = crowded || crowdOf(sim.list());
     sim.list().forEach(function (ag) {
       var pose = ag.state.pose;
       if (pose === 'lounging') {
@@ -223,6 +236,7 @@ function drive(projects) {
   seen.door = sim.list().length === 0;
   expect(seen.canteen && seen.pod, projects + ': workers reach the canteen, interns their pod');
   expect(blocked === null, projects + ': nobody walks through furniture (' + blocked + ')');
+  expect(crowded === null, projects + ': two agents never share a spot (' + crowded + ')');
   expect(seen.home === workers.length, projects + ': every sleeper is back at its own desk (' + seen.home + '/' + workers.length + ')');
   expect(seen.door, projects + ': everyone walks out of the door');
   expect(/seat moved/.test(seen.relaid), projects + ': a re-layout moves an away worker\'s seat (' + seen.relaid + ')');

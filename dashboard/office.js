@@ -91,6 +91,10 @@ function render(data) {
   $('office-hint').textContent = n.total
     ? n.working + ' working · ' + (n.total - n.working) + ' asleep · updated ' + clock(data.generated_at)
     : 'No session has reported in yet';
+  /* Without WebGL nothing draws a frame, so no `drawn` hook ever lets a
+     leaver out: the simulation would only grow. The rail and the hint are
+     the whole Office then. */
+  if (!state.view) return;
   state.workers = {};
   state.subs = {};
   const flat = [];
@@ -113,17 +117,15 @@ function render(data) {
   stage.classList.toggle('night', light.stars);
 
   const view = state.view;
-  if (view) {
-    if (fresh) {
-      const desks = {};
-      flat.forEach((worker) => { desks[worker.session_id] = { tier: Cast.tierOf(worker.model) }; });
-      view.setFloor(plan, state.theme, { night: light.lamps, desks }, light);
-    }
-    flat.forEach((worker) => view.scenery.setDesk(worker.session_id,
-      { working: worker.state === 'working', title: worker.title, extra: extraOf(worker) }));
-    view.scenery.setBoard(boardLines(data, n));
-    if (reduceMotion && state.visible) view.still();
+  if (fresh) {
+    const desks = {};
+    flat.forEach((worker) => { desks[worker.session_id] = { tier: Cast.tierOf(worker.model) }; });
+    view.setFloor(plan, state.theme, { night: light.lamps, desks }, light);
   }
+  flat.forEach((worker) => view.scenery.setDesk(worker.session_id,
+    { working: worker.state === 'working', title: worker.title, extra: extraOf(worker) }));
+  view.scenery.setBoard(boardLines(data, n));
+  if (reduceMotion && state.visible) view.still();
   renderRoster();
 }
 
@@ -186,20 +188,25 @@ function figureOf(agent) {
   const doing = live ? live.doing : null;
   const badge = intern ? Cast.badgeOf(who.type) : null;
   const partner = agent.state.partner;
-  const popped = agent.popped;
-  agent.popped = false;
   return {
     id: agent.id, key: tier.key + '|' + badge,
     spec: { id: agent.id, seed: Cast.hash(agent.id), look: agent.look, tier, intern, badge,
             scale: tier.scale * (intern ? INTERN_SCALE : 1) },
     pose: agent.state.pose, x: agent.pos.x, y: agent.pos.y, vel: agent.vel, facing: agent.facing,
     partner: partner ? partner.pos : null, family: Cast.familyOf(doing), talking: agent.bubble,
-    linked: state.linked === agent.id, popped, leaving: agent.leaving,
+    linked: state.linked === agent.id, popped: agent.popped, leaving: agent.leaving,
     parent: intern ? (sim.agents[agent.parentId] ? agent.parentId : agent.lead) : null, background: agent.background
   };
 }
 
-function figures() { return sim.list().map(figureOf).filter(Boolean); }
+/* The frame's figures. A squash plays once: the sim raises `popped`, and
+   this, the one reader per frame, lowers it once the figures are taken. */
+function figures() {
+  const agents = sim.list();
+  const list = agents.map(figureOf).filter(Boolean);
+  agents.forEach((agent) => { agent.popped = false; });
+  return list;
+}
 
 // ---------------------------------------------------------------- card
 function since(ts) {

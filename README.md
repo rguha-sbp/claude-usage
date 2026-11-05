@@ -293,6 +293,10 @@ bytes, calls):
 
 ## Troubleshooting
 
+- **The status line is blank or shows an error** — the statusline runs
+  the Python 3.15 interpreter that `install.sh` pinned. If uv removed it
+  (`uv python uninstall`, a clean `~/.local/share/uv`), re-run
+  `./install.sh` to pin the current one.
 - **No notifications appear** — most likely macOS permissions or Focus
   mode. Check System Settings → Notifications → terminal-notifier is
   allowed, and that Focus/Do Not Disturb is not silencing it. Re-run the

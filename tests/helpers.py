@@ -49,7 +49,7 @@ def compact_summary(ts: str, session_id: str = "s1") -> dict:
 def assistant_msg(msg_id: str, ts: str, model: str = "claude-fable-5", input_tokens: int = 2,
                   cache_write: int = 0, cache_read: int = 0, output: int = 10, thinking: int = 0,
                   content: list | None = None, session_id: str = "s1",
-                  cwd: str = "/Users/x/proj", sidechain: bool = False) -> dict:
+                  cwd: str = "/Users/x/proj", sidechain: bool = False, stop_reason: str | None = None) -> dict:
     rec = _common(ts, session_id, cwd)
     rec.update({
         "type": "assistant",
@@ -58,6 +58,7 @@ def assistant_msg(msg_id: str, ts: str, model: str = "claude-fable-5", input_tok
         "message": {
             "id": msg_id, "type": "message", "role": "assistant", "model": model,
             "content": content if content is not None else [{"type": "text", "text": "ok"}],
+            "stop_reason": stop_reason,
             "usage": {
                 "input_tokens": input_tokens,
                 "cache_creation_input_tokens": cache_write,
