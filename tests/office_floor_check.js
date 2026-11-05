@@ -138,15 +138,24 @@ report.themesDiffer = a !== b;
 expect(F.build({ rooms: [] }, THEMES[0]).W > 0, 'an empty office still has a floor');
 
 // ---------------------------------------------- the sim over the real floor
+function solidsOf(plan) {
+  return plan.desks.map(function (d) { return box(d.x, d.y, d.x + d.w, d.y + d.d); })
+    .concat(plan.decor.filter(function (d) { return d.mount === 'floor'; }).map(footprint))
+    .map(function (bx) { return grow(bx, -0.05); });
+}
+var AWAY = { walking: 1, drinking: 1, chatting: 1, lounging: 1 };
+function workersOf(data) {
+  var out = [];
+  data.rooms.forEach(function (room) { room.workers.forEach(function (w) { out.push(w); }); });
+  return out;
+}
+
 function drive(projects) {
   var data = payload(projects);
   var plan = F.build(data, THEMES[0]);
-  var solids = plan.desks.map(function (d) { return box(d.x, d.y, d.x + d.w, d.y + d.d); })
-    .concat(plan.decor.filter(function (d) { return d.mount === 'floor'; }).map(footprint))
-    .map(function (bx) { return grow(bx, -0.05); });
+  var solids = solidsOf(plan);
   var sim = new window.OfficeSim.Sim({ wander: true });
-  var workers = [];
-  data.rooms.forEach(function (room) { room.workers.forEach(function (w) { workers.push(w); }); });
+  var workers = workersOf(data);
   sim.sync(workers, plan.places);
   // a running intern for the first lead: it walks in from the door
   var first = workers[0];
@@ -156,10 +165,37 @@ function drive(projects) {
     });
   };
   sim.sync(withIntern('running'), plan.places);
-  var seen = { canteen: false, sofa: false, cooler: false, pod: false, door: 0, home: 0 };
-  var blocked = null, dt = 1 / 30;
+  var seen = { canteen: false, sofa: false, cooler: false, pod: false, door: 0, home: 0, relaid: null };
+  var blocked = null, relaid = null, dt = 1 / 30;
   var sofas = plan.seats.filter(function (s) { return !s.desk; });
+  var busiest = data.rooms.reduce(function (best, room, i) { return room.workers.length > data.rooms[best].workers.length ? i : best; }, 0);
   for (var t = 0; t < 420 * 30; t++) {
+    /* A session joins the biggest room while one of its workers is away
+       from its desk: the room is re-laid out under the walker's feet, and
+       the walker's desk moves along its row or to the next one. */
+    var away = !seen.relaid && t > 60 * 30 && sim.list().filter(function (ag) {
+      return ag.kind === 'lead' && ag.places.room === busiest && AWAY[ag.state.pose];
+    }).pop();
+    if (away) {
+      var seat = copyPt(away.places.seat), pose = away.state.pose;
+      data.rooms[busiest].workers.unshift({ session_id: 'newcomer', title: 'S', model: 'Opus 5', state: 'working', agents: [], agents_hidden: 0 });
+      plan = F.build(data, THEMES[0]);
+      solids = solidsOf(plan);
+      sofas = plan.seats.filter(function (s) { return !s.desk; });
+      workers = workersOf(data);
+      sim.sync(withIntern('running'), plan.places);
+      seen.relaid = pose + (Math.hypot(seat.x - away.places.seat.x, seat.y - away.places.seat.y) > 0.5 ? ', seat moved' : ', seat kept');
+      relaid = { agent: away, route: null, walls: plan.desks.map(function (d) { return box(d.x, d.y, d.x + d.w, d.y + d.d); })
+        .concat(plan.partitions.map(function (pt) { return grow(box(pt.x1, pt.y1, pt.x2, pt.y2), 0.08); })) };
+    }
+    // every walk the re-laid worker starts afterwards keeps to the new floor
+    if (relaid && relaid.agent.route !== relaid.route && relaid.agent.state.pose === 'walking') {
+      relaid.route = relaid.agent.route;
+      var legs = [copyPt(relaid.agent.pos)].concat(relaid.route.slice(relaid.agent.wp));
+      for (var k = 1; k < legs.length; k++) {
+        relaid.walls.forEach(function (w) { if (!blocked && segHits(legs[k - 1], legs[k], w)) blocked = relaid.agent.id + ' crosses the new floor after a re-layout'; });
+      }
+    }
     if (t === 300 * 30) sim.sync(withIntern('running').map(function (w) { return Object.assign({}, w, { state: 'asleep' }); }), plan.places);
     if (t === 360 * 30) sim.sync([], plan.places);                  // every session ends: everyone walks out
     sim.tick(dt);
@@ -189,6 +225,7 @@ function drive(projects) {
   expect(blocked === null, projects + ': nobody walks through furniture (' + blocked + ')');
   expect(seen.home === workers.length, projects + ': every sleeper is back at its own desk (' + seen.home + '/' + workers.length + ')');
   expect(seen.door, projects + ': everyone walks out of the door');
+  expect(/seat moved/.test(seen.relaid), projects + ': a re-layout moves an away worker\'s seat (' + seen.relaid + ')');
   return seen;
 }
 report.sim = { 1: drive(1), 4: drive(4), 12: drive(12) };

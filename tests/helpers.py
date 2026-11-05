@@ -33,10 +33,10 @@ def user_msg(text: str, ts: str, session_id: str = "s1", cwd: str = "/Users/x/pr
 
 
 def tool_result_msg(result_text: str, ts: str, session_id: str = "s1",
-                    cwd: str = "/Users/x/proj") -> dict:
+                    cwd: str = "/Users/x/proj", tool_use_id: str = "t1") -> dict:
     rec = _common(ts, session_id, cwd)
     rec.update({"type": "user", "message": {"role": "user", "content": [
-        {"type": "tool_result", "tool_use_id": "t1", "content": result_text}]}})
+        {"type": "tool_result", "tool_use_id": tool_use_id, "content": result_text}]}})
     return rec
 
 

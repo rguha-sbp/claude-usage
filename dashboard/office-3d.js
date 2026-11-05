@@ -193,6 +193,9 @@ export class OfficeView {
         if (id) this.hooks.pick(id);
       }
     });
+    /* A gesture the browser takes over (a touch scroll, a lost capture)
+       ends with no pointerup: drop the drag, or the next hover would pan. */
+    ['pointercancel', 'lostpointercapture'].forEach((type) => c.addEventListener(type, () => { this.drag = null; }));
     c.addEventListener('pointerleave', () => {
       if (this.hovered) { this.hovered = null; this.hooks.hover(null); }
     });
@@ -238,7 +241,9 @@ export class OfficeView {
   }
 
   /* Bring the figures in line with the list: new ones built, gone ones
-     dropped, a figure whose looks changed (its model moved tier) rebuilt. */
+     dropped, a figure whose looks changed (its model moved tier) rebuilt.
+     A dropped figure frees nothing on the GPU: every geometry, material
+     and texture a Person uses is module-level and shared by all of them. */
   cast(list, still) {
     const live = new Set();
     list.forEach((f) => {

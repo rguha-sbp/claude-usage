@@ -26,10 +26,17 @@ const THEME_KEY = 'usage.office.theme';
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const params = new URLSearchParams(location.search);
 
+/* `use(localStorage)`, or null when storage is blocked: then reading the
+   `localStorage` property itself throws SecurityError, and the Office runs
+   on without a remembered theme. */
+function stored(use) {
+  try { return use(localStorage); } catch (e) { return null; }
+}
+
 const sim = new window.OfficeSim.Sim({ wander: !reduceMotion });
 const state = { data: null, timer: null, ticker: null, visible: false, workers: {}, subs: {}, cast: {}, sig: '',
-                railSig: null, rosterSig: '', linked: '', card: null, view: null,
-                theme: Themes.themeOf(params.get('office') || localStorage.getItem(THEME_KEY)) };
+                plan: null, railSig: null, rosterSig: '', linked: '', card: null, view: null,
+                theme: Themes.themeOf(params.get('office') || stored((s) => s.getItem(THEME_KEY))) };
 
 // -------------------------------------------------------------- render
 function counts(data) {
@@ -63,6 +70,14 @@ function boardLines(data, n) {
   ];
 }
 
+/* What the floor is built from: the theme, the light, and every room's
+   project and sessions with their tiers. The plan (office-floor.js) and
+   the view's scenery are rebuilt only when it changes, not on every poll. */
+function floorSig(data, light) {
+  return state.theme.key + '@' + light.key + '@' + data.rooms.map((room) => room.project + ':' +
+    room.workers.map((worker) => worker.session_id + '/' + Cast.tierOf(worker.model).key).join(',')).join('|');
+}
+
 /* Interns past the pod's slots: counted on the desk instead. */
 function extraOf(worker) {
   return (worker.agents || []).filter((sub) => sub.state !== 'done').length - Floor.POD;
@@ -84,22 +99,22 @@ function render(data) {
     flat.push(worker);
     (worker.agents || []).forEach((sub) => { state.subs[worker.session_id + '/' + sub.agent_id] = { worker, sub }; });
   }));
-  const plan = n.total ? Floor.build(data, state.theme) : null;
+  const light = sky();
+  const sig = n.total ? floorSig(data, light) : '';
+  const fresh = sig !== state.sig;
+  if (fresh) { state.sig = sig; state.plan = sig ? Floor.build(data, state.theme) : null; }
+  const plan = state.plan;
   sim.sync(flat, plan ? plan.places : {});
   remember();
   markVacant();
   if (!plan) { renderRoster(); return; }
-  const light = sky();
   stage.style.setProperty('--sky-top', light.top);
   stage.style.setProperty('--sky-bottom', light.bottom);
   stage.classList.toggle('night', light.stars);
 
   const view = state.view;
   if (view) {
-    const sig = state.theme.key + '@' + light.key + '@' + data.rooms.map((room) => room.project + ':' +
-      room.workers.map((worker) => worker.session_id + '/' + Cast.tierOf(worker.model).key).join(',')).join('|');
-    if (sig !== state.sig) {
-      state.sig = sig;
+    if (fresh) {
       const desks = {};
       flat.forEach((worker) => { desks[worker.session_id] = { tier: Cast.tierOf(worker.model) }; });
       view.setFloor(plan, state.theme, { night: light.lamps, desks }, light);
@@ -230,15 +245,17 @@ function showCard(id) {
   placeCard(id);
 }
 
-/* Above the figure's head, kept inside the stage; below it near the top. */
+/* Above the figure's head, kept inside the stage; below it near the top.
+   All in the stage's own space, where the card is positioned:
+   `screenOf` is in the canvas's, which sits inside the stage. */
 function placeCard(id) {
   const at = state.view && state.view.screenOf(id);
   if (!at) return;
   const card = $('office-card');
-  const canvas = state.view.canvas;
-  const left = Math.max(0, Math.min(canvas.offsetLeft + at.x - card.offsetWidth / 2, canvas.offsetWidth - card.offsetWidth));
-  let top = canvas.offsetTop + at.y - card.offsetHeight - 14;
-  if (top < 0) top = canvas.offsetTop + at.y + 40;
+  const stage = $('office-stage').getBoundingClientRect(), canvas = state.view.canvas.getBoundingClientRect();
+  const x = canvas.left - stage.left + at.x, y = canvas.top - stage.top + at.y;
+  const left = Math.max(0, Math.min(x - card.offsetWidth / 2, stage.width - card.offsetWidth));
+  const top = y - card.offsetHeight - 14 < 0 ? y + 40 : y - card.offsetHeight - 14;
   card.style.left = left + 'px';
   card.style.top = top + 'px';
 }
@@ -297,7 +314,7 @@ function markTheme() {
    (app.js syncUrl keeps the query) would bring the preview back. */
 function chooseTheme(key) {
   state.theme = Themes.themeOf(key);
-  try { localStorage.setItem(THEME_KEY, state.theme.key); } catch (e) { /* private mode */ }
+  stored((s) => s.setItem(THEME_KEY, state.theme.key));
   const url = new URL(location.href);
   if (url.searchParams.has('office')) { url.searchParams.delete('office'); history.replaceState(null, '', url); }
   markTheme();

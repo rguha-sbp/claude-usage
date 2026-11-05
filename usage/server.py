@@ -89,9 +89,10 @@ class _Handler(BaseHTTPRequestHandler):
     def _host_is_local(self) -> bool:
         """Only this machine's own names reach the dashboard. A page on any
         other host name that rebinds its DNS to 127.0.0.1 (DNS rebinding)
-        must not read session titles and messages through the browser."""
-        port = self.app.port
-        return self.headers.get("Host", "") in ("127.0.0.1:%d" % port, "localhost:%d" % port)
+        must not read session titles and messages through the browser.
+        Host names are case-insensitive and may end in the root's dot."""
+        name, _, port = self.headers.get("Host", "").rpartition(":")
+        return port == str(self.app.port) and name.lower().removesuffix(".") in ("127.0.0.1", "localhost")
 
     def do_GET(self):  # noqa: N802 (stdlib method name)
         try:

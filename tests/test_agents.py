@@ -113,6 +113,49 @@ def test_asleep_once_quiet_past_the_working_window(tmp_path):
     assert _by_id(patient.session_agents(transcript, NOW)[0])["a1"].state == "running"
 
 
+def _append(path, *records):
+    with path.open("a") as fh:
+        for r in records:
+            fh.write(json.dumps(r) + "\n")
+
+
+def test_parallel_tool_calls_close_one_by_one(tmp_path):
+    """Read, Grep and a long Bash in one turn: the first results must not
+    clear the Bash that still runs."""
+    transcript, folder = _session(tmp_path)
+    jsonl = _agent(folder, "a1", [
+        assistant_msg("m1", iso(1), content=[tool("Read", tid="t1", file_path="/a"), tool("Grep", tid="t2", pattern="p"),
+                                             tool("Bash", tid="t3", command="make test")]),
+        tool_result_msg("a", iso(1), tool_use_id="t1"), tool_result_msg("hit", iso(2), tool_use_id="t2")])
+    reader = AgentReader(tmp_path)
+    assert _by_id(reader.session_agents(transcript, NOW)[0])["a1"].state == "running"   # 3 min quiet, Bash open
+    _append(jsonl, tool_result_msg("ok", iso(2), tool_use_id="t3"))
+    assert _by_id(reader.session_agents(transcript, NOW)[0])["a1"].state == "asleep"    # every call answered
+
+
+def test_a_foreground_agent_works_while_its_parent_waits_on_it(tmp_path):
+    """No record while the model composes a long reply: the lead's open
+    Agent call says the agent is still at work, for up to TOOL_PATIENCE."""
+    transcript = write_jsonl(tmp_path / "projects" / "-x" / "s1.jsonl", [
+        user_msg("go", iso(0)), assistant_msg("lead", iso(0), content=[tool("Agent", tid="toolu_a1", description="d")])])
+    folder = transcript.with_suffix("") / "subagents"
+    _agent(folder, "a1", [user_msg("look", iso(0)), assistant_msg("m1", iso(1), content=[tool("Grep", pattern="p")]),
+                          tool_result_msg("hit", iso(2))])
+    _agent(folder, "a2", [assistant_msg("m2", iso(2), content=[{"type": "text", "text": "Thinking aloud."}])],
+           toolUseId="toolu_a2")
+    _append(transcript, assistant_msg("lead2", iso(0), content=[tool("Agent", tid="toolu_a2", description="e")]))
+    reader = AgentReader(tmp_path)
+    agents = _by_id(reader.session_agents(transcript, NOW)[0])
+    assert agents["a1"].state == "running"                       # 3 min quiet, its lead still waits
+    assert agents["a2"].state == "running"                       # a text block mid-run is not the end
+    later = NOW + timedelta(minutes=13)                          # 16 min after iso(2)
+    assert _by_id(reader.session_agents(transcript, later)[0])["a1"].state == "asleep"
+    _append(transcript, tool_result_msg("interrupted", iso(3), tool_use_id="toolu_a1"),
+            tool_result_msg("done", iso(3), tool_use_id="toolu_a2"))
+    agents = _by_id(reader.session_agents(transcript, NOW)[0])
+    assert agents["a1"].state == "asleep" and agents["a2"].state == "done"   # the lead has its results
+
+
 def test_thinking_only_keeps_the_last_doing_and_targets_are_trimmed(tmp_path):
     transcript, folder = _session(tmp_path)
     _agent(folder, "a1", [assistant_msg("m1", iso(1), content=[tool("Bash", command="x" * 200)]),

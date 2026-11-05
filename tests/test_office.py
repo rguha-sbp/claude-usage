@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.helpers import assistant_msg, iso, user_msg, write_jsonl
+from tests.helpers import assistant_msg, iso, tool_result_msg, user_msg, write_jsonl
 from usage.office import Office, tail_activity
 
 NOW = datetime(2026, 9, 15, 8, 0, 0, tzinfo=timezone.utc)
@@ -162,6 +162,18 @@ def test_a_lead_works_only_while_it_works_or_waits_on_a_foreground_agent(tmp_pat
     assert w["delegated"]["agents"][0]["state"] == "running"
 
 
+def test_a_lead_blocked_on_a_quiet_foreground_agent_still_works(tmp_path):
+    """The agent writes nothing while it composes a long reply, but the lead's
+    Agent call is still open: both are at work (spec Sec 13.2, 14)."""
+    transcript = _transcript_with_running_agent(tmp_path, "f", RECENT)
+    write_jsonl(transcript.with_suffix("") / "subagents" / "agent-a1.jsonl", [
+        assistant_msg("s1", iso(0), content=[{"type": "tool_use", "id": "t1", "name": "Grep", "input": {}}]),
+        tool_result_msg("hit", (NOW - timedelta(minutes=3)).isoformat().replace("+00:00", "Z"))])
+    _state(tmp_path, "blocked", seen_ago=900, transcript_path=str(transcript))
+    w = _workers(_office(tmp_path).payload(now=NOW))["blocked"]
+    assert w["agents"][0]["state"] == "running" and w["state"] == "working"
+
+
 def test_payload_forgets_the_agents_of_sessions_that_left(tmp_path):
     a = _transcript_with_running_agent(tmp_path, "a", RECENT)
     b = _transcript_with_running_agent(tmp_path, "b", RECENT)
@@ -172,7 +184,7 @@ def test_payload_forgets_the_agents_of_sessions_that_left(tmp_path):
     assert len(office.reader._tallies) == 2
     (tmp_path / "b.json").unlink()
     office.payload(now=NOW)
-    assert [p.parent.parent for p in office.reader._tallies] == [a.resolve().with_suffix("")]
+    assert list(office.reader._tallies) == [a.resolve().with_suffix("")]
 
 
 def test_unusable_state_files_are_skipped(tmp_path):

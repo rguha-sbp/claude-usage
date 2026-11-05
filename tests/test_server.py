@@ -98,5 +98,9 @@ def test_server_refuses_a_foreign_host_header(tmp_path):
         assert status("127.0.0.1.evil.example:%d" % srv.port) == 403
         assert status("127.0.0.1:%d" % srv.port) == 200
         assert status("localhost:%d" % srv.port) == 200
+        assert status("LocalHost.:%d" % srv.port) == 200          # case-insensitive, root dot allowed
+        assert status("localhost..:%d" % srv.port) == 403
+        assert status("localhost:%d" % (srv.port + 1)) == 403
+        assert status("localhost") == 403
     finally:
         srv.stop()

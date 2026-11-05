@@ -148,8 +148,9 @@ window.OfficeSim = (function () {
      the session stops working: a gone session walks out, a sleeper walks
      home and dozes. */
   function errand(a, spot, then) { return walkTo(a, spot, then, { errand: true }); }
+  function atDesk(a) { return a.server === 'working' ? new Typing() : new Dozing(); }
   function backToDesk(a, sim) {
-    return goHome(a, sim, function () { return a.server === 'working' ? new Typing() : new Dozing(); });
+    return goHome(a, sim, function () { return atDesk(a); });
   }
   function errandOver(a, sim) {
     if (a.server === 'working') return null;
@@ -341,8 +342,6 @@ window.OfficeSim = (function () {
   }
 
   // --------------------------------------------------------------- Sim
-  var AWAY = { walking: 1, drinking: 1, chatting: 1, lounging: 1 };
-
   /* A fresh agent standing at `pos`: habits and looks follow from its id. */
   function newAgent(id, pos, lane) {
     var h = hash(id);
@@ -352,14 +351,25 @@ window.OfficeSim = (function () {
              look: { hair: h % 5, glasses: ((h >>> 3) % 3) === 0, coat: ((h >>> 5) % 4) === 0 } };
   }
 
-  /* A seated or standing agent follows its spot when the room is re-laid out. */
-  function relocate(a, seat) {
-    if (!AWAY[a.state.pose] && (a.places.seat.x !== seat.x || a.places.seat.y !== seat.y)) {
-      a.pos = copy(seat);
-      a.lane = seat.lane;
-      a.route = [];                        // the last walk was on the old floor: walkOut must not retrace it
-      a.wp = 0;
-    }
+  /* Hand an agent its places; when the floor was re-laid out under it (a
+     session joined or left), restart it at its new seat. Whatever it was
+     doing -- sitting, on an errand, walking in, out or home -- its position,
+     route and target belong to the old floor, and from a point of the old
+     floor no walk on the new one is known to be clear. The new seat is,
+     and every walk the agent then plans starts from there. */
+  function relocate(sim, a, places) {
+    var moved = a.places !== places && JSON.stringify(a.places) !== JSON.stringify(places);
+    a.places = places;
+    if (!moved) return;
+    sim.release(a);
+    a.pos = copy(places.seat);
+    a.lane = places.seat.lane;
+    a.vel = { x: 0, y: 0 };
+    a.route = [];
+    a.wp = 0;
+    var popped = a.popped;                 // a re-layout is not a moment to squash for
+    sim.transition(a, a.leaving ? new Leaving() : a.kind === 'intern' ? new Standing() : atDesk(a));
+    a.popped = popped;
   }
 
   function Sim(opts) {
@@ -377,9 +387,9 @@ window.OfficeSim = (function () {
   };
 
   /* Server payload in, agents updated: new sessions get an agent at their
-     seat, missing ones are told they are gone, and a seated agent whose
-     desk moved (rooms re-laid out) is moved with it, and each sub-agent gets
-     an intern (syncInterns). */
+     seat, missing ones are told they are gone, an agent whose places moved
+     (rooms re-laid out) restarts at its new seat (relocate), and each
+     sub-agent gets an intern (syncInterns). */
   Sim.prototype.sync = function (workers, placesById) {
     var seen = {};
     var self = this;
@@ -397,14 +407,13 @@ window.OfficeSim = (function () {
         a.places = places;
         a.tier = tier.key;
         a.speed = tier.speed;
-        self.transition(a, server === 'working' ? new Typing() : new Dozing());
+        self.transition(a, atDesk(a));
         a.popped = false;
       } else {
-        relocate(a, places.seat);
-        a.places = places;
         a.server = server;
         a.tier = tier.key;
         a.speed = tier.speed;
+        relocate(self, a, places);
       }
       self.syncInterns(w, places, seen);
     });
@@ -429,10 +438,8 @@ window.OfficeSim = (function () {
         a = self.spawnIntern(id, w.session_id, sub, places, slot);
       }
       seen[id] = true;
-      var p = internPlaces(places, a.slot);
-      relocate(a, p.seat);
-      a.places = p;
       a.server = sub.state;
+      relocate(self, a, internPlaces(places, a.slot));
       a.background = !!sub.background;
       a.parentId = sub.parent ? w.session_id + '/' + sub.parent : w.session_id;
     });

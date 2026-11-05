@@ -373,7 +373,7 @@ A session's sub-agents live beside its transcript: `<transcript without .jsonl>/
 
 ### 13.2 `usage/agents.py`
 
-Database-free and office-free. `AgentReader` keeps, per agent transcript, a byte offset and running totals, and on each call reads only the bytes appended since (the parser's append-only assumption); a file that shrank is re-read from 0. A cut final line is left for the next read (the offset stops before it). Per agent it produces a typed record:
+Database-free and office-free. `AgentReader` keeps, per agent transcript and per lead transcript of a session with sub-agents, a byte offset and running totals, and on each call reads only the bytes appended since (the parser's append-only assumption); a file that shrank is re-read from 0. A cut final line is left for the next read (the offset stops before it). Per agent it produces a typed record:
 
 | field | source |
 |---|---|
@@ -385,7 +385,7 @@ Database-free and office-free. `AgentReader` keeps, per agent transcript, a byte
 | `tools`, `tool_mix` | count of tool_use blocks, and count per tool name; `SubagentHandback` is not counted (it is the hand-back, not work) |
 | `doing` | last tool_use as `{tool, target}`, target the first of `file_path`, `command`, `pattern`, `url`, `query`, `description`, trimmed to 80 chars; `{tool: "replying"}` when the last assistant record is text only; a record with only thinking leaves `doing` as it was |
 | `started`, `last` | first and last record `timestamp` |
-| `state` | `done` once the agent has called `SubagentHandback` (how current Claude Code sub-agents finish; checked against 39 local transcripts), or, for older transcripts, when the last assistant record is text only and nothing has been written for 10 seconds; else `running` while `last` is within the Office's working window (60 s), or within 15 minutes when a tool call is still pending (a long Bash keeps an agent running though its file is quiet); else `asleep` (section 14) |
+| `state` | `done` once the agent has called `SubagentHandback` (how current Claude Code sub-agents finish; checked against 39 local transcripts), or, for older transcripts, when the last assistant record is text only, its parent has the result, and nothing has been written for 10 seconds; else `running` while `last` is within the Office's working window (60 s), or within 15 minutes while the agent is busy; else `asleep` (section 14). Busy means one of the agent's own tool calls has no `tool_result` with its `tool_use_id` yet (a long Bash beside parallel Reads that have answered), or its parent (the lead, or the agent that spawned it) has the `Agent`/`Task` call with this agent's `toolUseId` still open. The model writes no record while it composes a long reply, so a quiet file alone does not mean idle. A background agent's call is answered at launch, so only its own calls count; an interrupted agent's call is answered with the interruption, so it sleeps once quiet |
 
 An agent without a meta file, or whose transcript holds no record yet, is skipped. `session_agents(transcript_path, now)` returns every running and asleep agent plus the done agents whose `last` is within 2 hours, capped at the 20 most recent done ones, and the count of done ones left out (`hidden`). Paths outside `claude_dir` are ignored, as in 12.2.
 
@@ -393,7 +393,7 @@ An agent without a meta file, or whose transcript holds no record yet, is skippe
 
 `last_assistant_message` becomes `tail_activity(path, claude_dir)` returning `{last_message, doing}` from the same tail read; `doing` uses the same rule as 13.2. Each worker gains:
 
-- `doing`: the lead's own current tool, or `null`.
+- `doing`: the lead's own current tool while it works, or `null` (a sleeping lead shows none, section 14).
 - `agents`: the flat list from 13.2 (the tree is built by the client from `parent`).
 - `agents_hidden`: the `hidden` count.
 
@@ -428,12 +428,12 @@ New `usage/agents.py`, `dashboard/office-figures.js` (DOM-free: `figure`, `headg
 
 Requested on 2026-11-05: idle sessions and sub-agents must look asleep, only leads wear the crown, workers walk to the cooler only while they work, and every tip must cite the Claude Code documentation.
 
-- **Lead state.** The server decides it alone. A lead is `working` when its statusline stamp is within `office.working_seconds`, or while it waits on a `running` sub-agent that is not a background one; otherwise `asleep`, and `doing` is `null`. The client no longer upgrades a lead because an intern is busy.
-- **Sub-agent state.** `running`, `asleep` or `done` (13.2). `stalled` is gone; a quiet agent is `asleep` and its intern naps in its slot. The rail marks it with a `z` glyph and dims the row.
+- **Lead state.** The server decides it alone. A lead is `working` when its statusline stamp is within `office.working_seconds`, or while it waits on a `running` sub-agent that is not a background one (13.2: running while the lead's `Agent` call is open, up to 15 minutes of quiet); otherwise `asleep`, and `doing` is `null`. A lead whose own window has passed while only a background agent runs is `asleep` and shows no tool: the background agent's work is not its lead's. The client no longer upgrades a lead because an intern is busy.
+- **Sub-agent state.** `running`, `asleep` or `done` (13.2). `stalled` is gone; a quiet agent that is not busy (13.2: no open tool call of its own, and no parent still waiting on it), or busy but quiet for 15 minutes, is `asleep` and its intern naps in its slot. The rail marks it with a `z` glyph and dims the row.
 - **Intern dress.** `office-cast.js` `internTierOf(model)` is the model's tier without the crown and the halo; other accessories stay.
 - **Breaks.** A sleeper never leaves its desk. After a Thinking beat a working lead takes a break with probability 0.3 (canteen, aisle chat with a working colleague, or the cooler). A break is an errand: the moment the session stops working the walker goes home and dozes, or walks out if the session is gone.
 - **Tips.** Each tip has `doc`, a `https://code.claude.com/docs/en/...#section` link, and its text was rewritten to say only what that page says (checked 2026-11-05): compacting at a natural break (prompt-caching), subagents keeping verbose output out of the main context while their own calls still count, the cache lifetime of one hour on a subscription and five minutes on an API key, `/clear` between unrelated tasks, specific prompts needing fewer file reads, `/effort` for simpler tasks, and loaded skills staying in the conversation.
-- **Hardening.** The server answers 403 unless `Host` is `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding). The installer shell-quotes the repo path in the statusline and hook commands and still recognises its own hook when quoted. `ccusage` is pinned to `20.0.48` instead of `@latest`.
+- **Hardening.** The server answers 403 unless `Host` is `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding), the name compared without case and with one trailing dot allowed (`localhost.`). The installer shell-quotes the repo path in the statusline and hook commands and still recognises its own hook when quoted. `ccusage` is pinned to `20.0.48` instead of `@latest`.
 - **CI.** `.github/workflows/tests.yml` runs pytest (which drives the node checks) on macOS with Python 3.9 and 3.13 (revised in 16: 3.15 only).
 
 ## 15. Revision 2026-11-05: the Office in three.js
@@ -451,7 +451,7 @@ Requested on 2026-11-05: replace the SVG campus with a three.js open-plan office
 
 ### 15.2 The simulation on the floor
 
-`office-sim.js` keeps its contract (12.3, 13.4, 14). Two changes. `GRIP = 8` in the `arrive` steering: without it a walker overshot at a corner and cut across furniture. And a leaver walks out from wherever it is: the door's `via` starts at the worker's own aisle, so `walkOut` follows the route the worker is on, back or ahead, to the nearest point of its way out (seat, aisle, the door's `via`, the door), then folds the out-and-back stretches. Every leg is one the floor already keeps clear. `tests/office_floor_check.js` drives the simulation over real floors and fails on anyone who walks through a desk or a piece of decor, including sessions that end at the canteen, at another row's cooler or halfway along a walk.
+`office-sim.js` keeps its contract (12.3, 13.4, 14). Two changes. `GRIP = 8` in the `arrive` steering: without it a walker overshot at a corner and cut across furniture. And a leaver walks out from wherever it is: the door's `via` starts at the worker's own aisle, so `walkOut` follows the route the worker is on, back or ahead, to the nearest point of its way out (seat, aisle, the door's `via`, the door), then folds the out-and-back stretches. Every leg is one the floor already keeps clear. A re-layout (a session joins or leaves) restarts every agent whose places moved at its new seat, whatever it was doing: its position, route and target belong to the old floor, and only the new seat is known to be clear. `tests/office_floor_check.js` drives the simulation over real floors and fails on anyone who walks through a desk or a piece of decor, including sessions that end at the canteen, at another row's cooler or halfway along a walk, and a re-layout during a break.
 
 ### 15.3 Themes
 
@@ -477,7 +477,7 @@ three r187 is vendored in `dashboard/vendor/three` (the npm tarball's `three.mod
 
 ### 15.7 Controller, accessibility and tests
 
-`office.js` is an ES module: it fetches every 5 s, feeds the simulation and the view, and owns the hover card, the theme picker, the Agents rail links and a screen-reader roster of buttons (one per worker). The empty-office note replaces the canvas only once the last figure has walked out. Tests: `tests/office_floor_check.js` (every floor size in every theme), `tests/office_themes_check.js` (complete themes, names the scenery draws), static checks for the import map and the vendored hashes, and `tests/test_office_browser.py`, which loads the office in headless Chrome against the real server and fails without a rendered frame or on a console error (skipped without Chrome).
+`office.js` is an ES module: it fetches every 5 s, feeds the simulation and the view (the plan and the scenery are rebuilt only when the theme, the light or the rooms' sessions and tiers change), and owns the hover card, the theme picker, the Agents rail links and a screen-reader roster of buttons (one per worker). The empty-office note replaces the canvas only once the last figure has walked out. Tests: `tests/office_floor_check.js` (every floor size in every theme), `tests/office_themes_check.js` (complete themes, names the scenery draws), static checks for the import map and the vendored hashes, and `tests/test_office_browser.py`, which loads the office in headless Chrome against the real server and fails without a rendered frame or on a console error (skipped without Chrome).
 
 ## 16. Revision 2026-11-05: Python 3.15 and Dependabot
 

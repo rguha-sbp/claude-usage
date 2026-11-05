@@ -57,6 +57,7 @@ def test_floor_layout_holds_for_every_theme():
     assert all(count > 50 for count in report["decor"].values())  # a decorated floor, not a bare one
     for seen in report["sim"].values():
         assert seen["canteen"] and seen["sofa"] and seen["pod"] and seen["door"]
+        assert seen["relaid"].endswith("seat moved")             # a re-layout during a break moved the walker's desk
     # sessions ending at the canteen, at another row's cooler and mid-walk
     # leave on legs that cross no desk, partition or decor
     assert all(count > 0 for count in report["leavers"].values())
